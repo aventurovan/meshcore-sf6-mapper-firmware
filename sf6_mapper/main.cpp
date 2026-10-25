@@ -39,7 +39,7 @@
   #define MOVE_THRESHOLD_M    30.0      // przesuniecie uznawane za ruch (m)
 #endif
 #ifndef MOVE_SPREAD_M
-  #define MOVE_SPREAD_M       20.0      // ruch = przesuniecie o tyle metrow w oknie ostatnich ~20 s
+  #define MOVE_SPREAD_M       25.0      // ruch = przesuniecie o tyle metrow w oknie ostatnich ~20 s
 #endif
 #define MOVE_SAMPLE_MS        2000UL    // co ile probka pozycji do wykrywania ruchu
 #define MOVE_WINDOW           10        // liczba probek w oknie (10 x 2 s = 20 s)
@@ -108,7 +108,7 @@ static unsigned long last_resp_at = 0;
 
 // wykrywanie ruchu: probki pozycji z ostatnich ~20 s
 static int32_t  mv_lat[MOVE_WINDOW], mv_lon[MOVE_WINDOW];
-static int      mv_count = 0, mv_head = 0;
+static int      mv_count = 0, mv_head = 0, mv_streak = 0;
 static unsigned long mv_next = 0;
 static unsigned long fix_since = 0;
 
@@ -376,10 +376,11 @@ static bool limitSuspect(unsigned long now) {
 }
 
 // ---------------- wykrywanie ruchu ----------------
+static bool rawMoving();
 static void movementLoop() {
-  if (!gpsFix()) { fix_since = 0; mv_count = 0; return; }
+  if (!gpsFix()) { fix_since = 0; mv_count = 0; mv_streak = 0; return; }
   unsigned long now = millis();
-  if (fix_since == 0) { fix_since = now; mv_count = 0; }
+  if (fix_since == 0) { fix_since = now; mv_count = 0; mv_streak = 0; }
   if (now - fix_since < FIX_WARMUP_MS) return;
   if ((long)(now - mv_next) < 0) return;
   mv_next = now + MOVE_SAMPLE_MS;
@@ -388,19 +389,30 @@ static void movementLoop() {
   mv_lon[mv_head] = l->getLongitude();
   mv_head = (mv_head + 1) % MOVE_WINDOW;
   if (mv_count < MOVE_WINDOW) mv_count++;
+  mv_streak = rawMoving() ? mv_streak + 1 : 0;
 }
 
-// pojedynczy skok pozycji GPS przesuwa ja tylko w jednej polowie okna - prawdziwy ruch w obu
-static bool isMoving() {
+// Ruch = przesuniecie >= 25 m w oknie ~20 s po w miare prostej drodze. Drgania GPS w budynku (losowe skoki
+// po kilkadziesiat metrow) maja dluga droge i male przesuniecie netto, wiec nie sa ruchem.
+static bool rawMoving() {
   if (mv_count < MOVE_MIN_SAMPLES) return false;
-  int newest = (mv_head + MOVE_WINDOW - 1) % MOVE_WINDOW;
   int oldest = (mv_head + MOVE_WINDOW - mv_count) % MOVE_WINDOW;
+  int newest = (mv_head + MOVE_WINDOW - 1) % MOVE_WINDOW;
   int mid    = (oldest + mv_count / 2) % MOVE_WINDOW;
-  double total  = distMeters(mv_lat[oldest], mv_lon[oldest], mv_lat[newest], mv_lon[newest]);
-  double first  = distMeters(mv_lat[oldest], mv_lon[oldest], mv_lat[mid], mv_lon[mid]);
-  double second = distMeters(mv_lat[mid], mv_lon[mid], mv_lat[newest], mv_lon[newest]);
-  return total >= MOVE_SPREAD_M && first >= MOVE_SPREAD_M * 0.3 && second >= MOVE_SPREAD_M * 0.3;
+  double net = distMeters(mv_lat[oldest], mv_lon[oldest], mv_lat[newest], mv_lon[newest]);
+  if (net < MOVE_SPREAD_M) return false;
+  double path = 0;
+  for (int k = 0; k < mv_count - 1; k++) {
+    int i = (oldest + k) % MOVE_WINDOW, j = (oldest + k + 1) % MOVE_WINDOW;
+    path += distMeters(mv_lat[i], mv_lon[i], mv_lat[j], mv_lon[j]);
+  }
+  if (path <= 0 || net / path < 0.6) return false;
+  return distMeters(mv_lat[oldest], mv_lon[oldest], mv_lat[mid], mv_lon[mid]) >= MOVE_SPREAD_M * 0.3
+      && distMeters(mv_lat[mid], mv_lon[mid], mv_lat[newest], mv_lon[newest]) >= MOVE_SPREAD_M * 0.3;
 }
+
+// ruch potwierdzony w 3 kolejnych probkach (~6 s), zeby pojedynczy skok GPS nie wznawial pingow
+static bool isMoving() { return mv_streak >= 3; }
 
 // ---------------- mapowanie ----------------
 static void startPing() {
@@ -408,23 +420,17 @@ static void startPing() {
   int32_t lat = l->getLatitude();
   int32_t lon = l->getLongitude();
 
-  // wykrywanie postoju
-  bool far = !have_last_pos || distMeters(last_lat, last_lon, lat, lon) >= MOVE_THRESHOLD_M;
-  if (still_count >= STATIONARY_PINGS) {            // pauza: wznawiamy tylko przy prawdziwym ruchu
-    if (!far) { next_ping_at = millis() + 2000; return; }
-    if (!isMoving()) {                              // skok pozycji bez ruchu: przesun punkt postoju, bez pingu
-      last_lat = lat; last_lon = lon;
-      next_ping_at = millis() + 2000;
-      return;
-    }
+  // postoj: 4 pingi bez ruchu = pauza; wznowienie tylko przy potwierdzonym ruchu
+  bool moving = isMoving();
+  if (still_count >= STATIONARY_PINGS) {
+    if (!moving) { next_ping_at = millis() + 2000; return; }
     still_count = 1;
-    last_lat = lat; last_lon = lon; have_last_pos = true;
-  } else if (!far) {
-    still_count++;
+  } else if (moving) {
+    still_count = 1;
   } else {
-    still_count = 1;
-    last_lat = lat; last_lon = lon; have_last_pos = true;
+    still_count++;
   }
+  last_lat = lat; last_lon = lon; have_last_pos = true;
 
   // dystans sesji (miedzy kolejnymi pingami; drobne drgania GPS i skoki pomijane)
   if (have_sess_pos) {

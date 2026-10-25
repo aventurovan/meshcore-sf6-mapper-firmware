@@ -58,7 +58,7 @@ class CompanionMapper {
   int32_t _last_lat, _last_lon;
   int _still;
   int32_t _mv_lat[10], _mv_lon[10];
-  int _mv_count, _mv_head;
+  int _mv_count, _mv_head, _mv_streak;
   unsigned long _mv_next, _fix_since;
   // limit repeatera (4 odpowiedzi / 2 min)
   struct Lim { uint8_t p[MAP_PREFIX_LEN]; unsigned long t[4]; uint8_t n; bool used; } _lim[16];
@@ -78,6 +78,7 @@ class CompanionMapper {
   bool gpsFix();
   void movementLoop();
   bool isMoving();
+  bool rawMoving();
   void startPing();
   void finishPing();
   void limitRecord(const uint8_t* prefix, unsigned long now);

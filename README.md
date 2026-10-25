@@ -34,7 +34,7 @@ Samodzielny tracker do mapowania zasięgu. Działa bez telefonu, a dane zrzuca s
   Przez 10 s zbiera odpowiedzi.
 - Każdy ping zapisuje z pozycją do flasha QSPI: trafienie (lista repeaterów z SNR w obie strony i RSSI) albo pudło.
   Pojemność to 1.5 MB, czyli około 35–40 tys. punktów.
-- Po 4 pingach bez ruchu robi pauzę i nie nadaje. Wznawia dopiero przy prawdziwym ruchu (szczegóły w punkcie „Postój”).
+- Po 4 pingach bez ruchu robi pauzę i nie nadaje. Wznawia dopiero przy potwierdzonym ruchu (szczegóły w punkcie „Postój”).
 - Nie przekazuje pakietów i nie wysyła adwertów. Jest niewidoczny w sieci poza samymi pingami.
 - Ma własny klucz publiczny i nazwę. Każdy tracker to osobne konto w Mapperze, a nazwa trackera jest nickiem.
   Nazwa BLE to zawsze `MeshCore-` + nazwa, np. `MeshCore-Pawlo_T1`. Domyślnie jest to `MeshCore-SF6Map-XXXX`.
@@ -89,8 +89,12 @@ Wszystkie ustawienia zostają po wyłączeniu trackera.
 **Blokada ekranu** (domyślnie włączona). Gdy ekran zgaśnie, tracker się blokuje. Przycisk tylko zapala ekran, a odblokowanie
 wymaga przytrzymania środka joysticka przez 3 s (pasek postępu na dole ekranu). Przy zasilaniu z USB (tryb samochodowy) blokada i wygaszanie są wyłączone.
 
-**Postój:** po 4 pingach w jednym miejscu tracker przestaje nadawać. Wznawia pracę dopiero przy prawdziwym ruchu,
-czyli przemieszczeniu w ciągu ~20 s. Skok pozycji po ponownym złapaniu GPS albo odbicia sygnału nie wznawiają pingów.
+**Postój:** po 4 pingach bez ruchu tracker przestaje nadawać i wznawia pracę dopiero przy **potwierdzonym ruchu**:
+przesunięciu o co najmniej 25 m w ciągu ok. 20 s, po w miarę prostej drodze, widocznym w 3 kolejnych odczytach GPS (ok. 6 s).
+Drgania pozycji GPS w budynku, gdzie pozycja potrafi „skakać” o kilkadziesiąt metrów, skoki po ponownym złapaniu sygnału
+ani odbicia nie są uznawane za ruch. Od wersji 1.1.4 ta sama reguła decyduje też o wejściu w pauzę, więc urządzenie
+leżące na biurku zatrzymuje się po 4 pingach. Ruch wykrywany jest od ok. 3 m/s (rower, auto). Przy powolnym marszu
+mapper może przejść w pauzę.
 
 **Ostrzeżenia:**
 - **Pamięć:** przy 80%, 90% i 100% zajętości pojawia się komunikat i sygnał.
@@ -156,7 +160,7 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
 - **Sygnał przy odpowiedzi repeatera** (Wio, buzzer): krótkie piknięcie. Gra także przy wyciszonych wiadomościach,
   a wyłączasz je w menu mappera. T-Echo nie ma buzzera.
 - **Mapowanie bez telefonu:** pingi co 20–60 s (tylko repeatery), zapis odpowiedzi z pozycją GPS do pamięci (1,5 MB, flash QSPI),
-  pauza na postoju, znacznik możliwego limitu repeatera, tak jak w trackerze SF6 Mapper. Ustawienia (WŁ/STOP, interwał, dźwięk)
+  pauza na postoju (te same zasady co w trackerze, punkt „Postój”), znacznik możliwego limitu repeatera. Ustawienia (WŁ/STOP, interwał, dźwięk)
   zostają po wyłączeniu.
 - **Warunki pingowania:** radio companiona musi być ustawione na preset SF6 (869,618 MHz · BW 62,5 kHz · SF6), a GPS włączony
   z fixem. Ekran pokazuje, czego brakuje.

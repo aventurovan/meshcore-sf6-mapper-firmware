@@ -6,7 +6,7 @@
 #define CMAP_COLLECT_MS      10000UL
 #define CMAP_STATIONARY      4
 #define CMAP_MOVE_M          30.0
-#define CMAP_SPREAD_M        20.0
+#define CMAP_SPREAD_M        25.0
 #define CMAP_MIN_SATS        4
 #define CMAP_PHONE_HOLD_MS   120000UL   // telefon mapuje: companion nie pinguje przez 2 min od ostatniego pingu telefonu
 #define CMAP_SETTINGS        "/sf6cmap"
@@ -22,7 +22,7 @@ static double distM(int32_t a1, int32_t o1, int32_t a2, int32_t o2) {
 
 CompanionMapper::CompanionMapper() : _host(NULL), _cfgfs(NULL), _run(false), _interval(MAP_INTERVAL_DEFAULT), _session(0),
   _next_ping(0), _last_ping(0), _collect_until(0), _phone_ping_at(0), _collecting(false), _tag(0), _resp_n(0),
-  _have_pos(false), _last_lat(0), _last_lon(0), _still(0), _mv_count(0), _mv_head(0), _mv_next(0), _fix_since(0),
+  _have_pos(false), _last_lat(0), _last_lon(0), _still(0), _mv_count(0), _mv_head(0), _mv_streak(0), _mv_next(0), _fix_since(0),
   _sync(false), _sync_next(0), _sync_last(0), _sync_left(0), _sync_sent(0), _pings(0), _hits(0), _last_n(-1), _last_snr(0), _sound(true) {
   memset(_lim, 0, sizeof(_lim));
   memset(_recent, 0, sizeof(_recent));
@@ -80,38 +80,52 @@ bool CompanionMapper::gpsFix() {
 }
 
 void CompanionMapper::movementLoop() {
-  if (!gpsFix()) { _fix_since = 0; _mv_count = 0; return; }
+  if (!gpsFix()) { _fix_since = 0; _mv_count = 0; _mv_streak = 0; return; }
   unsigned long now = millis();
-  if (_fix_since == 0) { _fix_since = now; _mv_count = 0; }
+  if (_fix_since == 0) { _fix_since = now; _mv_count = 0; _mv_streak = 0; }
   if (now - _fix_since < 15000UL || (long)(now - _mv_next) < 0) return;
   _mv_next = now + 2000;
   LocationProvider* l = sensors.getLocationProvider();
   _mv_lat[_mv_head] = l->getLatitude(); _mv_lon[_mv_head] = l->getLongitude();
   _mv_head = (_mv_head + 1) % 10;
   if (_mv_count < 10) _mv_count++;
+  _mv_streak = rawMoving() ? _mv_streak + 1 : 0;
 }
 
-bool CompanionMapper::isMoving() {
+// Ruch = przesuniecie >= 25 m w oknie ~20 s po w miare prostej drodze. Drgania GPS w budynku (losowe skoki
+// po kilkadziesiat metrow) maja dluga droge i male przesuniecie netto, wiec nie sa ruchem.
+bool CompanionMapper::rawMoving() {
   if (_mv_count < 6) return false;
-  int nw = (_mv_head + 9) % 10, od = (_mv_head + 10 - _mv_count) % 10, md = (od + _mv_count / 2) % 10;
-  return distM(_mv_lat[od], _mv_lon[od], _mv_lat[nw], _mv_lon[nw]) >= CMAP_SPREAD_M
-      && distM(_mv_lat[od], _mv_lon[od], _mv_lat[md], _mv_lon[md]) >= CMAP_SPREAD_M * 0.3
+  int od = (_mv_head + 10 - _mv_count) % 10, nw = (_mv_head + 9) % 10, md = (od + _mv_count / 2) % 10;
+  double net = distM(_mv_lat[od], _mv_lon[od], _mv_lat[nw], _mv_lon[nw]);
+  if (net < CMAP_SPREAD_M) return false;
+  double path = 0;
+  for (int k = 0; k < _mv_count - 1; k++) {
+    int i = (od + k) % 10, j = (od + k + 1) % 10;
+    path += distM(_mv_lat[i], _mv_lon[i], _mv_lat[j], _mv_lon[j]);
+  }
+  if (path <= 0 || net / path < 0.6) return false;
+  return distM(_mv_lat[od], _mv_lon[od], _mv_lat[md], _mv_lon[md]) >= CMAP_SPREAD_M * 0.3
       && distM(_mv_lat[md], _mv_lon[md], _mv_lat[nw], _mv_lon[nw]) >= CMAP_SPREAD_M * 0.3;
 }
+
+// ruch potwierdzony w 3 kolejnych probkach (~6 s), zeby pojedynczy skok GPS nie wznawial pingow
+bool CompanionMapper::isMoving() { return _mv_streak >= 3; }
 
 void CompanionMapper::startPing() {
   LocationProvider* l = sensors.getLocationProvider();
   int32_t lat = l->getLatitude(), lon = l->getLongitude();
-  bool far = !_have_pos || distM(_last_lat, _last_lon, lat, lon) >= CMAP_MOVE_M;
+  // postoj: 4 pingi bez ruchu = pauza; wznowienie tylko przy potwierdzonym ruchu
+  bool moving = isMoving();
   if (_still >= CMAP_STATIONARY) {
-    if (!far) { _next_ping = millis() + 2000; return; }
-    if (!isMoving()) { _last_lat = lat; _last_lon = lon; _next_ping = millis() + 2000; return; }
-    _still = 1; _last_lat = lat; _last_lon = lon; _have_pos = true;
-  } else if (!far) {
-    _still++;
+    if (!moving) { _next_ping = millis() + 2000; return; }
+    _still = 1;
+  } else if (moving) {
+    _still = 1;
   } else {
-    _still = 1; _last_lat = lat; _last_lon = lon; _have_pos = true;
+    _still++;
   }
+  _last_lat = lat; _last_lon = lon; _have_pos = true;
 
   memset(&_hdr, 0, sizeof(_hdr));
   long ts = l->getTimestamp();
