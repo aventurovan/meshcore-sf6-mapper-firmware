@@ -49,13 +49,14 @@ Menu zamyka się samo po 30 s.
 | Bluetooth | wł./wył. |
 | Blokada | blokada ekranu wł./wył. |
 | Wygaszanie | 30 s / 1 min / 2 min / nigdy; przy zasilaniu z USB ekran nie gaśnie |
-| Informacje | nazwa, PIN BT i klucz, firmware, pamięć, ostatni zrzut, napięcie baterii |
-| Serwis | usuń dane, usuń parowania BT, ustawienia fabryczne, nowa tożsamość |
+| Informacje | nazwa, **PIN Bluetooth** i klucz, firmware, pamięć, ostatni zrzut, napięcie baterii |
+| Serwis | usuń dane, usuń parowania BT, nowy PIN BT, ustawienia fabryczne, nowa tożsamość |
 | Wyłącz | uśpienie trackera; włączenie: naciśnij środek joysticka |
 
 **Operacje z menu Serwis i wyłączanie** wymagają przytrzymania środka joysticka (2–3 s, z paskiem postępu):
 - **Usuń dane:** kasuje punkty. Ostrzega, ile z nich nie zostało wysłanych.
 - **Usuń parowania BT:** telefony trzeba będzie sparować ponownie.
+- **Nowy PIN BT:** losuje nowy PIN, usuwa sparowane telefony i restartuje tracker.
 - **Ustawienia fabryczne:** usuwa ustawienia, nazwę, dane i parowania BT. Klucz zostaje, więc tracker wraca na to samo konto, choć z nazwą `SF6Map-XXXX`.
 - **Nowa tożsamość:** jak ustawienia fabryczne, ale z nowym kluczem, czyli nowym kontem. Wymaga dwóch kroków.
 
@@ -89,6 +90,13 @@ pobierzesz z sekcji *Artifacts* danego przebiegu.
 2. Kliknij szybko dwa razy reset. Pojawi się dysk USB.
 3. Przeciągnij na niego plik `.uf2`.
 
+## Bezpieczeństwo (od 1.1.3)
+
+- **PIN Bluetooth jest losowy (6 cyfr)**, tworzony przy pierwszym uruchomieniu, a także po ustawieniach fabrycznych i nowej tożsamości.
+  Sprawdzisz go w Menu → Informacje. Przy parowaniu telefon prosi o ten PIN.
+  Telefony sparowane wcześniej (przed 1.1.3) działają dalej. Gdy chcesz je odciąć, użyj Serwis → Nowy PIN BT.
+- **Podpis:** tracker podpisuje kluczem tylko wyzwania logowania Mappera. Nikt w zasięgu Bluetooth nie poprosi go o podpisanie czegoś innego.
+
 ## Ustawienia przy kompilacji
 
 Można je nadpisać w `build_flags`:
@@ -99,6 +107,48 @@ Można je nadpisać w `build_flags`:
 | `STATIONARY_PINGS` | 4 | pingi w miejscu przed pauzą |
 | `MOVE_THRESHOLD_M` | 30.0 | próg ruchu (m) |
 | `MIN_SATS` | 4 | minimum satelitów |
-| `BLE_PIN_CODE` | 123456 | PIN parowania BLE |
 
 Protokół BLE dla aplikacji opisuje `sf6_mapper/PROTOCOL.md`.
+
+
+---
+
+# Companion + SF6 Mapper (drugi firmware w tym repo)
+
+Plik `Companion-SF6Mapper-WioTrackerL1-<wersja>.uf2` to **zwykły companion MeshCore** (oficjalny kod MeshCore,
+interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
+
+- **Jako companion:** działa jak zawsze z aplikacją MeshCore (wiadomości, **do 500 kontaktów** — oficjalny companion ma 350, 40 kanałów) i z Mapperem SF6 w telefonie
+  (mapowanie z telefonu). PIN Bluetooth jest losowy i wyświetla się na ekranie, jak w oficjalnym firmware.
+- **Mapowanie bez telefonu:** na ekranie companiona strona **„SF6 Mapper”**. Przełączasz ją joystickiem lewo/prawo,
+  a środek joysticka włącza albo wyłącza mapper. Mapper pinguje co 20–60 s (tylko repeatery), zapisuje odpowiedzi z pozycją
+  GPS do pamięci (1,5 MB, flash QSPI), robi pauzę na postoju i oznacza możliwy limit repeatera, tak jak tracker SF6 Mapper.
+  Ustawienie WŁ/STOP zostaje po wyłączeniu. **STOP wymaga potwierdzenia** (drugie naciśnięcie w ciągu 4 s).
+- **Blokada ekranu:** zgaszony ekran albo 60 s bez przycisku blokuje urządzenie. Przycisk tylko zapala ekran
+  z podpowiedzią „Blokada: trzymaj OK”, a odblokowanie wymaga przytrzymania środka joysticka (na T-Echo przycisku) przez 3 s.
+  W kieszeni nie da się więc przypadkiem wyłączyć mappera ani urządzenia.
+- **Warunki pingowania:** radio companiona musi być ustawione na preset SF6 (869,618 MHz · BW 62,5 kHz · SF6), a GPS włączony
+  z fixem. Ekran pokazuje, czego brakuje.
+- **Gdy telefon sam mapuje** (Mapper SF6 wysyła pingi przez companiona), wbudowany mapper czeka, żeby nie dublować pingów,
+  i wznawia pracę 2 minuty po ostatnim pingu telefonu.
+- **Zrzut danych:** w aplikacji Mapper SF6 → Połącz pojawia się druga karta **„SF6 Mapper w companionie”** z liczbą punktów
+  do wysłania, przyciskiem **Zrzuć dane na serwer**, „Pokaż na mapie”, interwałem i start/STOP. Punkty trafiają na konto
+  companiona, czyli to samo co mapowanie z telefonu. Z trackera zostają skasowane dopiero po zapisie na serwerze.
+
+Protokół zrzutu jest ten sam co w trackerze (`sf6_mapper/PROTOCOL.md`). W HELLO jest dodatkowa flaga `0x80`
+(„companion z mapperem”), a zmiana nazwy działa przez aplikację MeshCore.
+
+Kod: `companion_mapper/` (kopia `examples/companion_radio` z MeshCore + `CompanionMapper.*`), środowisko
+`WioTrackerL1_companion_mapper_ble` w `platformio-sf6.ini`. Workflow buduje oba firmware naraz.
+
+## LilyGO T-Echo
+
+Ten sam „Companion + SF6 Mapper” jest budowany także dla **LilyGO T-Echo** (plik `Companion-SF6Mapper-T-Echo-<wersja>.uf2`,
+środowisko `LilyGo_T-Echo_companion_mapper_ble`):
+
+- **Ekran:** e-papier, interfejs oficjalnego companiona MeshCore dla T-Echo plus strona **„SF6 Mapper”**.
+- **Przycisk:** krótkie naciśnięcie przełącza strony, przytrzymanie na stronie „SF6 Mapper” włącza lub wyłącza mapper.
+- **Odliczanie:** na e-papierze nie ma odliczania sekund do pingu, bo każda zmiana wymaga odświeżenia ekranu.
+- **Bez zmian względem Wio:** GPS, flash QSPI, 500 kontaktów, zrzut danych do aplikacji Mapper SF6.
+
+Samodzielny tracker (`sf6_mapper`) jest tylko dla Wio Tracker L1, bo korzysta z joysticka i ekranu OLED 128×64.
