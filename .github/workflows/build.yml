@@ -29,6 +29,7 @@ jobs:
         run: |
           mkdir -p MeshCore/examples/sf6_mapper
           cp mapper/sf6_mapper/* MeshCore/examples/sf6_mapper/
+          cp -r mapper/companion_mapper MeshCore/examples/
           cat mapper/platformio-sf6.ini >> MeshCore/variants/wio-tracker-l1/platformio.ini
 
       - uses: actions/setup-python@v5
@@ -47,8 +48,10 @@ jobs:
       - name: Buduj
         working-directory: MeshCore
         run: |
-          pio run -e WioTrackerL1_sf6_mapper
-          python3 bin/uf2conv/uf2conv.py .pio/build/WioTrackerL1_sf6_mapper/firmware.hex -c -o .pio/build/WioTrackerL1_sf6_mapper/firmware.uf2 -f 0xADA52840
+          pio run -e WioTrackerL1_sf6_mapper -e WioTrackerL1_companion_mapper_ble -e LilyGo_T-Echo_companion_mapper_ble
+          for E in WioTrackerL1_sf6_mapper WioTrackerL1_companion_mapper_ble LilyGo_T-Echo_companion_mapper_ble; do
+            python3 bin/uf2conv/uf2conv.py .pio/build/$E/firmware.hex -c -o .pio/build/$E/firmware.uf2 -f 0xADA52840
+          done
 
       - name: Zbierz pliki
         run: |
@@ -56,6 +59,10 @@ jobs:
           mkdir -p out
           cp MeshCore/.pio/build/WioTrackerL1_sf6_mapper/firmware.uf2 out/SF6Mapper-WioTrackerL1-$VER.uf2
           cp MeshCore/.pio/build/WioTrackerL1_sf6_mapper/firmware.zip out/SF6Mapper-WioTrackerL1-$VER-ota.zip 2>/dev/null || true
+          cp MeshCore/.pio/build/WioTrackerL1_companion_mapper_ble/firmware.uf2 out/Companion-SF6Mapper-WioTrackerL1-$VER.uf2
+          cp MeshCore/.pio/build/WioTrackerL1_companion_mapper_ble/firmware.zip out/Companion-SF6Mapper-WioTrackerL1-$VER-ota.zip 2>/dev/null || true
+          cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble/firmware.uf2 out/Companion-SF6Mapper-T-Echo-$VER.uf2
+          cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble/firmware.zip out/Companion-SF6Mapper-T-Echo-$VER-ota.zip 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
