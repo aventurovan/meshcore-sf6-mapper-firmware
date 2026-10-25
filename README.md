@@ -135,6 +135,28 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   do wysłania, przyciskiem **Zrzuć dane na serwer**, „Pokaż na mapie”, interwałem i start/STOP. Punkty trafiają na konto
   companiona, czyli to samo co mapowanie z telefonu. Z trackera zostają skasowane dopiero po zapisie na serwerze.
 
+### Mapper a połączenie z telefonem
+
+Wbudowany mapper działa także przy połączonym telefonie. Zależy to tylko od tego, czy **telefon sam mapuje**:
+
+| Sytuacja | Co robi mapper w companionie |
+|---|---|
+| Telefon niepołączony | mapuje sam (jeśli włączony) |
+| Telefon połączony **aplikacją MeshCore** (wiadomości, kontakty) | **mapuje dalej**, połączenie mu nie przeszkadza |
+| Telefon połączony **Mapperem SF6**, ale bez „Start mapowanie” | **mapuje dalej**; w aplikacji widać jego pingi w oknie LIVE (podgląd) i kartę „SF6 Mapper w companionie” |
+| W Mapperze SF6 na telefonie włączasz **„Start mapowanie”** | **wstrzymuje się**, żeby nie było podwójnych pingów: mapuje telefon, a pomiary idą od razu na serwer |
+| Zatrzymujesz mapowanie w telefonie | mapper w companionie **wraca sam po 2 minutach** |
+
+- **Odpowiedzi na pingi wbudowanego mappera** zostają w companionie i nie trafiają do aplikacji, więc nie mieszają się
+  z mapowaniem z telefonu.
+- **Dane:** pomiary z telefonu lecą od razu na serwer, a pomiary z mappera w companionie czekają w jego pamięci,
+  aż zrobisz „Zrzuć dane na serwer”. Wszystko trafia na to samo konto.
+- **Warunki pingowania są zawsze te same:** radio companiona na presecie SF6, GPS z fixem, mapper włączony
+  (na ekranie albo w aplikacji).
+
+W praktyce mapper w companionie można zostawić stale włączony: w drodze mapuje sam, a gdy włączysz mapowanie
+w telefonie, sam ustąpi.
+
 Protokół zrzutu jest ten sam co w trackerze (`sf6_mapper/PROTOCOL.md`). W HELLO jest dodatkowa flaga `0x80`
 („companion z mapperem”), a zmiana nazwy działa przez aplikację MeshCore.
 
