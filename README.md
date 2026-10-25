@@ -120,13 +120,26 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
 
 - **Jako companion:** działa jak zawsze z aplikacją MeshCore (wiadomości, **do 500 kontaktów** — oficjalny companion ma 350, 40 kanałów) i z Mapperem SF6 w telefonie
   (mapowanie z telefonu). PIN Bluetooth jest losowy i wyświetla się na ekranie, jak w oficjalnym firmware.
-- **Mapowanie bez telefonu:** na ekranie companiona strona **„SF6 Mapper”**. Przełączasz ją joystickiem lewo/prawo,
-  a środek joysticka włącza albo wyłącza mapper. Mapper pinguje co 20–60 s (tylko repeatery), zapisuje odpowiedzi z pozycją
-  GPS do pamięci (1,5 MB, flash QSPI), robi pauzę na postoju i oznacza możliwy limit repeatera, tak jak tracker SF6 Mapper.
-  Ustawienie WŁ/STOP zostaje po wyłączeniu. **STOP wymaga potwierdzenia** (drugie naciśnięcie w ciągu 4 s).
-- **Blokada ekranu:** zgaszony ekran albo 60 s bez przycisku blokuje urządzenie. Przycisk tylko zapala ekran
-  z podpowiedzią „Blokada: trzymaj OK”, a odblokowanie wymaga przytrzymania środka joysticka (na T-Echo przycisku) przez 3 s.
-  W kieszeni nie da się więc przypadkiem wyłączyć mappera ani urządzenia.
+- **Ekran (Wio i T-Echo):** zaraz po stronie startowej są dwie strony mappera, a dalej strony companiona po polsku
+  (ostatnio słyszane, radio, Bluetooth, advert, GPS, czujniki, wyłączanie):
+  1. **SF6 Mapper:** WŁ/STOP, stan (mapuje / czekam na GPS / pauza / radio nie SF6 / mapuje telefon), odliczanie do pingu
+     (tylko Wio), odpowiedzi/pingi, satelity, punkty do wysłania;
+  2. **Ostatnie RPT:** 4 ostatnie repeatery, które odpowiedziały: godzina, 2 bajty klucza, SNR.
+- **Menu mappera:** środek joysticka na stronie „SF6 Mapper” (na T-Echo przytrzymanie przycisku) otwiera menu:
+  - **Mapowanie** WŁ/STOP. STOP wymaga drugiego naciśnięcia w ciągu 4 s;
+  - **Ping co** 20/30/40/50/60 s;
+  - **Dźwięk** przy odpowiedzi repeatera WŁ/WYŁ;
+  - **Wyjście**.
+
+  Na Wio poruszasz się joystickiem góra/dół, a lewo wychodzi z menu. Na T-Echo kliknięcie przechodzi niżej, dwuklik wyżej,
+  a przytrzymanie zmienia wartość.
+- **GPS włącza się i wyłącza razem z mapperem:** włączenie mappera (z ekranu albo z aplikacji) włącza GPS, a STOP go wyłącza.
+  Po restarcie z włączonym mapperem GPS włącza się sam.
+- **Sygnał przy odpowiedzi repeatera** (Wio, buzzer): krótkie piknięcie. Gra także przy wyciszonych wiadomościach,
+  a wyłączasz je w menu mappera. T-Echo nie ma buzzera.
+- **Mapowanie bez telefonu:** pingi co 20–60 s (tylko repeatery), zapis odpowiedzi z pozycją GPS do pamięci (1,5 MB, flash QSPI),
+  pauza na postoju, znacznik możliwego limitu repeatera, tak jak w trackerze SF6 Mapper. Ustawienia (WŁ/STOP, interwał, dźwięk)
+  zostają po wyłączeniu.
 - **Warunki pingowania:** radio companiona musi być ustawione na preset SF6 (869,618 MHz · BW 62,5 kHz · SF6), a GPS włączony
   z fixem. Ekran pokazuje, czego brakuje.
 - **Gdy telefon sam mapuje** (Mapper SF6 wysyła pingi przez companiona), wbudowany mapper czeka, żeby nie dublować pingów,
@@ -174,3 +187,7 @@ Ten sam „Companion + SF6 Mapper” jest budowany także dla **LilyGO T-Echo** 
 - **Bez zmian względem Wio:** GPS, flash QSPI, 500 kontaktów, zrzut danych do aplikacji Mapper SF6.
 
 Samodzielny tracker (`sf6_mapper`) jest tylko dla Wio Tracker L1, bo korzysta z joysticka i ekranu OLED 128×64.
+
+---
+
+Firmware oparte na [MeshCore](https://github.com/meshcore-dev/MeshCore) (licencja MIT) — szczegóły w [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

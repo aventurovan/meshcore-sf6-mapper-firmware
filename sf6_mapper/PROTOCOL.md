@@ -1,7 +1,7 @@
 # SF6 Mapper – protokół BLE (wersja 4, firmware 1.1.1)
 
-Tracker używa tej samej usługi BLE co companion MeshCore (Nordic UART / BLEUart,
-PIN parowania 123456). Nazwa BLE to zawsze `MeshCore-` + nazwa trackera.
+Tracker używa tej samej usługi BLE co companion MeshCore (Nordic UART / BLEUart).
+PIN parowania jest losowy (6 cyfr), tworzony przy pierwszym uruchomieniu i widoczny w Menu → Informacje (od 1.1.3). Nazwa BLE to zawsze `MeshCore-` + nazwa trackera.
 Domyślnie jest to `MeshCore-SF6Map-XXXX`, gdzie XXXX to pierwsze 2 bajty klucza
 publicznego, a po ustawieniu nazwy np. `MeshCore-Pawlo_T1`. Nazwa trackera jest
 nickiem jego konta w Mapperze (każdy tracker ma osobne konto). Każdy zapis BLE to jedna ramka; pierwszy
@@ -86,7 +86,8 @@ widoczna od następnego rozgłoszenia, czyli po rozłączeniu telefonu.
 
 **Podpis (logowanie do Mappera)** – identycznie jak w companionie MeshCore:
 `33` → `19` `[0][max_len u32]`; każde `34` → `0` (OK); `35` → `20` `[podpis Ed25519 64 B]`.
-Podpisywane są surowe bajty przekazane w `34`. Błąd stanu (np. `34` bez `33`)
+Podpisywane są surowe bajty przekazane w `34`. Od 1.1.3 tracker podpisuje **tylko** wyzwania logowania
+Mappera, czyli tekst zaczynający się od `mmr1|`, o długości 20–80 B. Inne dane dostają odpowiedź `0x01` z kodem 6. Błąd stanu (np. `34` bez `33`)
 zwraca `0x01` z kodem 4, przekroczenie 512 B – kod 5.
 
 **`0x01` ERR** – `err u8`: 1 nieznana komenda, 2 złe argumenty (np. niedozwolony interwał lub nazwa), 3 zajęty (ACK w trakcie GET), 4 zły stan, 5 za dużo danych do podpisu

@@ -28,6 +28,8 @@ public:
   virtual void eraseData() = 0;
   virtual void factoryReset() = 0;     // restart trackera
   virtual void newIdentity() = 0;      // restart trackera
+  virtual void newPin() = 0;           // nowy losowy PIN BT, usuniecie parowan, restart
+  virtual uint32_t getPin() = 0;
   virtual void powerOff() = 0;
   virtual int  getInfoLines(char lines[][MAP_LINE_SZ], int max) = 0;
 };
@@ -37,7 +39,7 @@ public:
   enum Beep { BEEP_HIT, BEEP_WARN, BEEP_OK };
 private:
   enum Screen { SCR_SPLASH, SCR_MAIN, SCR_MENU, SCR_SERVICE, SCR_INFO, SCR_CONFIRM };
-  enum Confirm { CF_NONE, CF_ERASE, CF_BONDS, CF_FACTORY, CF_NEWID1, CF_NEWID2, CF_POWER };
+  enum Confirm { CF_NONE, CF_ERASE, CF_BONDS, CF_PIN, CF_FACTORY, CF_NEWID1, CF_NEWID2, CF_POWER };
 #ifdef DISPLAY_CLASS
   DisplayDriver* _disp;
 #endif

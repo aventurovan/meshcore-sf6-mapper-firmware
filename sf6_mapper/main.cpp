@@ -48,9 +48,6 @@
 #ifndef MIN_SATS
   #define MIN_SATS            4
 #endif
-#ifndef BLE_PIN_CODE
-  #define BLE_PIN_CODE        123456
-#endif
 #define BLE_NAME_PREFIX       "MeshCore-"   // ten sam prefiks co companion - aplikacja znajdzie urzadzenie tym samym filtrem
 #define SYNC_MAX_BATCH        200
 
@@ -100,6 +97,7 @@ static bool     ble_on = true;
 static bool     lock_on = true;
 static uint8_t  timeout_idx = 1;      // 0=30 s, 1=1 min, 2=2 min, 3=nigdy
 static uint32_t last_sync_ts = 0;     // czas ostatniego zrzutu danych (UNIX)
+static uint32_t ble_pin = 0;          // losowy PIN Bluetooth (6 cyfr), generowany przy pierwszym uruchomieniu
 
 // sesja
 static uint8_t  session_no = 0;
@@ -237,10 +235,12 @@ struct __attribute__((packed)) MapperSettings {
   uint8_t  lock_on;
   uint8_t  timeout_idx;              // od v1.1.0
   uint32_t last_sync_ts;
+  uint32_t ble_pin;                  // od v1.1.3
 };
 #define SETTINGS_MAGIC      0x5A
 #define SETTINGS_V102_SIZE  (2 + MAP_NAME_MAX + 1)
 #define SETTINGS_V103_SIZE  (SETTINGS_V102_SIZE + 4)
+#define SETTINGS_V110_SIZE  (SETTINGS_V103_SIZE + 1 + 4)
 
 static bool nameValid(const char* n, int len) {
   if (len < MAP_NAME_MIN || len > MAP_NAME_MAX) return false;
@@ -266,10 +266,11 @@ static void loadSettings() {
       if (n >= SETTINGS_V103_SIZE) {
         buzzer_on = st.buzzer_on != 0; gps_on = st.gps_on != 0; ble_on = st.ble_on != 0; lock_on = st.lock_on != 0;
       }
-      if (n == sizeof(st)) {
+      if (n >= SETTINGS_V110_SIZE) {
         timeout_idx = st.timeout_idx <= 3 ? st.timeout_idx : 1;
         last_sync_ts = st.last_sync_ts;
       }
+      if (n == sizeof(st) && st.ble_pin >= 100000 && st.ble_pin <= 999999) ble_pin = st.ble_pin;
     }
   }
   File s = InternalFS.open(SESSION_FILE, FILE_O_READ);
@@ -285,6 +286,7 @@ static void saveSettings() {
   st.buzzer_on = buzzer_on; st.gps_on = gps_on; st.ble_on = ble_on; st.lock_on = lock_on;
   st.timeout_idx = timeout_idx;
   st.last_sync_ts = last_sync_ts;
+  st.ble_pin = ble_pin;
   InternalFS.remove(SETTINGS_FILE);
   File f = InternalFS.open(SETTINGS_FILE, FILE_O_WRITE);
   if (!f) return;
@@ -512,6 +514,12 @@ static void doPowerOff(bool wait_release) {
   board.powerOff();
 }
 
+static uint32_t randomPin() {
+  uint32_t r = 0;
+  the_mesh.getRNG()->random((uint8_t*)&r, sizeof(r));
+  return 100000UL + r % 900000UL;                   // 6 cyfr, bez zera na poczatku
+}
+
 static void wipeAndRestart(bool new_identity) {
   ble.disable();
   Bluefruit.Periph.clearBonds();
@@ -548,12 +556,21 @@ public:
   void clearBonds() override { ble.disable(); Bluefruit.Periph.clearBonds(); if (ble_on) ble.enable(); }
   void eraseData() override { maplog.eraseAll(); mem_warned = 0; }
   void factoryReset() override { wipeAndRestart(false); }
+  void newPin() override {                          // nowy PIN: sparowane telefony usuniete, restart z nowym PIN-em
+    ble_pin = randomPin();
+    saveSettings();
+    ble.disable();
+    Bluefruit.Periph.clearBonds();
+    delay(500);
+    NVIC_SystemReset();
+  }
+  uint32_t getPin() override { return ble_pin; }
   void newIdentity() override { wipeAndRestart(true); }
   void powerOff() override { doPowerOff(true); }
   int  getInfoLines(char lines[][MAP_LINE_SZ], int max) override {
     int n = 0;
     if (n < max) snprintf(lines[n++], MAP_LINE_SZ, "%s", tracker_name);
-    if (n < max) snprintf(lines[n++], MAP_LINE_SZ, "PIN %lu · %02X%02X%02X%02X", (unsigned long) BLE_PIN_CODE,
+    if (n < max) snprintf(lines[n++], MAP_LINE_SZ, "PIN %06lu · %02X%02X%02X%02X", (unsigned long) ble_pin,
                           the_mesh.self_id.pub_key[0], the_mesh.self_id.pub_key[1], the_mesh.self_id.pub_key[2], the_mesh.self_id.pub_key[3]);
     if (n < max) snprintf(lines[n++], MAP_LINE_SZ, "Firmware: %s", MAPPER_FW_VERSION);
     if (n < max) snprintf(lines[n++], MAP_LINE_SZ, "Pamięć: %d%% · %lu pkt", memPct(), (unsigned long) maplog.pending());
@@ -748,6 +765,10 @@ static void handleBleFrame(const uint8_t* cmd, size_t len) {
 
     case CMD_SIGN_FINISH: {
       if (!sign_active) { sendErr(MAP_ERR_BAD_STATE); break; }
+      // tylko wyzwanie logowania Mappera: "mmr1|czas|losowe|podpis serwera" (zwykly tekst, bez dowolnych danych)
+      if (sign_len < 20 || sign_len > 80 || memcmp(sign_buf, MAP_SIGN_PREFIX, strlen(MAP_SIGN_PREFIX)) != 0) {
+        sign_active = false; sign_len = 0; sendErr(MAP_ERR_NOT_ALLOWED); break;
+      }
       frame[0] = RESP_SIGNATURE;
       the_mesh.self_id.sign(&frame[1], sign_buf, sign_len);
       sign_active = false;
@@ -881,7 +902,11 @@ void setup() {
   if (tracker_name[0] == 0) {   // domyslna nazwa: SF6Map-XXXX (poczatek klucza)
     snprintf(tracker_name, sizeof(tracker_name), "SF6Map-%02X%02X", the_mesh.self_id.pub_key[0], the_mesh.self_id.pub_key[1]);
   }
-  ble.begin(BLE_NAME_PREFIX, tracker_name, BLE_PIN_CODE);
+  if (ble_pin < 100000 || ble_pin > 999999) {       // pierwsze uruchomienie (albo po ust. fabrycznych): losowy PIN
+    ble_pin = randomPin();
+    saveSettings();
+  }
+  ble.begin(BLE_NAME_PREFIX, tracker_name, ble_pin);
   if (ble_on) ble.enable();
 
   memset(&status, 0, sizeof(status));

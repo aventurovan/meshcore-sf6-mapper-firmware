@@ -15,7 +15,7 @@ static MomentaryButton joystick_down(JOYSTICK_DOWN, 1000, true, false, false);
 #endif
 
 enum MenuItem { MI_RUN, MI_IVL, MI_SESSION, MI_SOUND, MI_GPS, MI_BLE, MI_LOCK, MI_TIMEOUT, MI_INFO, MI_SERVICE, MI_POWER, MI_EXIT, MI_COUNT };
-enum ServiceItem { SI_ERASE, SI_BONDS, SI_FACTORY, SI_NEWID, SI_BACK, SI_COUNT };
+enum ServiceItem { SI_ERASE, SI_BONDS, SI_PIN, SI_FACTORY, SI_NEWID, SI_BACK, SI_COUNT };
 static const char* const TIMEOUT_TXT[4] = {"30 s", "1 min", "2 min", "nigdy"};
 static const unsigned long TIMEOUT_MS[4] = {30000UL, 60000UL, 120000UL, 0};
 #define MENU_ROWS 5
@@ -151,6 +151,7 @@ void MapperUI::serviceAction(int item) {
   switch (item) {
     case SI_ERASE:   _screen = SCR_CONFIRM; _confirm = CF_ERASE; break;
     case SI_BONDS:   _screen = SCR_CONFIRM; _confirm = CF_BONDS; break;
+    case SI_PIN:     _screen = SCR_CONFIRM; _confirm = CF_PIN; break;
     case SI_FACTORY: _screen = SCR_CONFIRM; _confirm = CF_FACTORY; break;
     case SI_NEWID:   _screen = SCR_CONFIRM; _confirm = CF_NEWID1; break;
     case SI_BACK:    _screen = SCR_MENU; break;
@@ -165,6 +166,7 @@ void MapperUI::confirmDone() {
   switch (c) {
     case CF_ERASE:   _ctl->eraseData(); _screen = SCR_MAIN; flash("Dane usunięte"); beep(BEEP_OK); break;
     case CF_BONDS:   _ctl->clearBonds(); _screen = SCR_MAIN; flash("Parowania BT", "usunięte"); beep(BEEP_OK); break;
+    case CF_PIN:     showNow("Nowy PIN Bluetooth", "restart..."); _ctl->newPin(); break;
     case CF_FACTORY: showNow("Ustawienia fabryczne", "restart..."); _ctl->factoryReset(); break;
     case CF_NEWID2:  showNow("Nowa tożsamość", "restart..."); _ctl->newIdentity(); break;
     case CF_POWER:   _ctl->powerOff(); break;
@@ -267,7 +269,7 @@ void MapperUI::loop(const MapperStatus& st) {
   if (_on && !_locked && _screen == SCR_CONFIRM && _confirm != CF_NEWID1) {
     if (user_btn.isPressed()) {
       if (_hold_start == 0) _hold_start = millis();
-      unsigned long need = (_confirm == CF_POWER || _confirm == CF_BONDS) ? 2000UL : 3000UL;
+      unsigned long need = (_confirm == CF_POWER || _confirm == CF_BONDS || _confirm == CF_PIN) ? 2000UL : 3000UL;
       if (millis() - _hold_start >= need) confirmDone();
       _next_refresh = 0;
     } else _hold_start = 0;
@@ -327,8 +329,8 @@ void MapperUI::render(const MapperStatus& st) {
       break;
     }
     case SCR_SERVICE: {
-      const char* labels[SI_COUNT] = {"Usuń dane", "Usuń parowania BT", "Ust. fabryczne", "Nowa tożsamość", "Wstecz"};
-      const char* vals[SI_COUNT] = {"", "", "", "", ""};
+      const char* labels[SI_COUNT] = {"Usuń dane", "Usuń parowania BT", "Nowy PIN BT", "Ust. fabryczne", "Nowa tożsamość", "Wstecz"};
+      const char* vals[SI_COUNT] = {"", "", "", "", "", ""};
       drawMenuScreen(_g, "SERWIS", labels, vals, SI_COUNT, _ssel, _stop);
       break;
     }
@@ -340,7 +342,7 @@ void MapperUI::render(const MapperStatus& st) {
     }
     case SCR_CONFIRM: {
       char l1[MAP_LINE_SZ];
-      unsigned long need = (_confirm == CF_POWER || _confirm == CF_BONDS) ? 2000UL : 3000UL;
+      unsigned long need = (_confirm == CF_POWER || _confirm == CF_BONDS || _confirm == CF_PIN) ? 2000UL : 3000UL;
       int pct = _hold_start ? (int)((millis() - _hold_start) * 100 / need) : 0;
       uint32_t p = _ctl->pendingCount();
       switch (_confirm) {
@@ -352,6 +354,12 @@ void MapperUI::render(const MapperStatus& st) {
         case CF_BONDS:
           drawConfirmScreen(_g, "PAROWANIA BT", "Telefony trzeba będzie", "sparować ponownie.", "Trzymaj OK 2 s", pct);
           break;
+        case CF_PIN: {
+          char l2[MAP_LINE_SZ];
+          snprintf(l2, sizeof(l2), "Obecny: %06lu", (unsigned long) _ctl->getPin());
+          drawConfirmScreen(_g, "NOWY PIN BT", "Losuje nowy PIN i usuwa", l2, "Trzymaj OK 2 s", pct);
+          break;
+        }
         case CF_FACTORY:
           if (p) snprintf(l1, sizeof(l1), "Usuwa %lu niewysł. pkt", (unsigned long) p);
           else strcpy(l1, "Ustawienia, nazwa, dane");

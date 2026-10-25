@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define MAPPER_PROTO_VER      4
-#define MAPPER_FW_VERSION     "1.1.2"
+#define MAPPER_FW_VERSION     "1.1.3"
 
 // aplikacja -> tracker
 #define CMD_MAP_HELLO         0xA0   // []                       -> RESP_MAP_HELLO
@@ -41,10 +41,12 @@
 #define MAP_ERR_BUSY          3
 #define MAP_ERR_BAD_STATE     4      // np. SIGN_DATA bez SIGN_START
 #define MAP_ERR_TOO_LONG      5      // za duzo danych do podpisu
+#define MAP_ERR_NOT_ALLOWED   6      // podpis odrzucony: to nie jest wyzwanie logowania Mappera
 
 #define MAP_NAME_MIN          2
 #define MAP_NAME_MAX          20     // "MeshCore-" + 20 znakow miesci sie w rozgloszeniu BLE
 #define MAP_SIGN_MAX          512    // max bajtow danych do podpisu
+#define MAP_SIGN_PREFIX       "mmr1|"  // tracker podpisuje tylko wyzwania logowania Mappera (format serwera)
 
 // flagi stanu w RESP_MAP_HELLO
 #define MAP_STATE_RUN         0x01   // mapowanie wlaczone
