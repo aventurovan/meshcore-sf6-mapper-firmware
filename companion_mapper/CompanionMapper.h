@@ -23,7 +23,14 @@ public:
   virtual bool mpRadioIsSF6() = 0;
   virtual uint16_t mpBattMv() = 0;
   virtual BaseSerialInterface* mpSerial() = 0;
+  virtual void mpSetGps(bool on) = 0;        // GPS wl./wyl. (z zapisem w ustawieniach companiona)
 };
+
+// interfejs ekranu (UITask): sygnal przy odpowiedzi repeatera
+void mapperUiHit();
+
+#define CMAP_RECENT 5
+struct MapperRecent { bool valid; uint32_t ts; uint8_t prefix[2]; int8_t snr_x4; };
 
 struct MapperView {          // stan dla ekranu
   bool run, radio_ok, gps_fix, stationary, phone_mapping, log_full, collecting;
@@ -65,6 +72,8 @@ class CompanionMapper {
   int _last_n;
   uint8_t _last_prefix[2];
   int8_t _last_snr;
+  bool _sound;
+  MapperRecent _recent[CMAP_RECENT];
 
   bool gpsFix();
   void movementLoop();
@@ -88,7 +97,12 @@ public:
   bool onControl(mesh::Packet* pkt, int8_t snr_x4, int8_t rssi);   // true = odpowiedz na nasz ping (nie do aplikacji)
   void notePhoneDiscover() { _phone_ping_at = millis(); }   // telefon sam mapuje — wstrzymaj pingi
   bool isRunning() const { return _run; }
-  void setRunning(bool on);
+  void setRunning(bool on);                                  // wlacza/wylacza tez GPS
+  int  getInterval() const { return _interval; }
+  void setInterval(int s);
+  bool soundOn() const { return _sound; }
+  void setSound(bool on) { _sound = on; saveSettings(); }
+  const MapperRecent* recent() const { return _recent; }
   void getView(MapperView& v);
 };
 

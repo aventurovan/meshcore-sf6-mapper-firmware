@@ -109,6 +109,7 @@ public:
   bool mpRadioIsSF6() override;
   uint16_t mpBattMv() override;
   BaseSerialInterface* mpSerial() override { return _serial; }
+  void mpSetGps(bool on) override;
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

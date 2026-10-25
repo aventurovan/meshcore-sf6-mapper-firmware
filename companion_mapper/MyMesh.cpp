@@ -2242,6 +2242,10 @@ bool MyMesh::mpRadioIsSF6() {            // preset SF6 sieci MeshCore Poludnie: 
   return fabsf(_prefs.freq - 869.618f) < 0.005f && fabsf(_prefs.bw - 62.5f) < 0.1f && _prefs.sf == 6;
 }
 uint16_t MyMesh::mpBattMv() { return board.getBattMilliVolts(); }
+void MyMesh::mpSetGps(bool on) {
+  sensors.setSettingValue("gps", on ? "1" : "0");
+  if (_prefs.gps_enabled != (on ? 1 : 0)) { _prefs.gps_enabled = on ? 1 : 0; savePrefs(); }
+}
 
 void MyMesh::loop() {
   BaseChatMesh::loop();

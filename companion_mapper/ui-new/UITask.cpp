@@ -15,6 +15,30 @@ static bool          ui_locked = false;
 static unsigned long ui_last_input = 0;
 static unsigned long ui_hold_at = 0;
 static unsigned long map_stop_armed = 0;
+static bool          map_beep_restore = false;
+class UITask;
+static UITask*       g_ui = NULL;
+#if defined(UI_HAS_JOYSTICK) && UI_HAS_JOYSTICK && defined(JOYSTICK_UP) && defined(JOYSTICK_DOWN)
+  #include <helpers/ui/MomentaryButton.h>
+  static MomentaryButton joy_up(JOYSTICK_UP, 1000, true, false, false);      // gora/dol: menu mappera
+  static MomentaryButton joy_down(JOYSTICK_DOWN, 1000, true, false, false);
+  #define CMAP_UPDOWN 1
+#endif
+// czas lokalny (Polska: CET/CEST wg zasad UE) z czasu UNIX
+static int32_t cm_days(int y, unsigned m, unsigned d) {
+  y -= m <= 2; const int32_t era = (y >= 0 ? y : y - 399) / 400; const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t) doe - 719468;
+}
+static uint32_t cm_lastSun(int y, unsigned m) { int32_t d = cm_days(y, m, 31); int wd = (int)((d + 4) % 7); if (wd < 0) wd += 7; return (uint32_t)(d - wd) * 86400UL + 3600UL; }
+void mapperLocalHM(uint32_t utc, uint8_t* hh, uint8_t* mm) {
+  int32_t z = (int32_t)(utc / 86400UL) + 719468; const int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const unsigned doe = (unsigned)(z - era * 146097); const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int y = (int)(yoe + era * 400); const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100); const unsigned mp = (5 * doy + 2) / 153;
+  unsigned m = mp + (mp < 10 ? 3 : -9); y += (m <= 2);
+  uint32_t t = utc + ((utc >= cm_lastSun(y, 3) && utc < cm_lastSun(y, 10)) ? 7200UL : 3600UL);
+  uint32_t sec = t % 86400UL; *hh = sec / 3600; *mm = (sec / 60) % 60;
+}
 
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
@@ -34,9 +58,9 @@ static unsigned long map_stop_armed = 0;
 #endif
 
 #if UI_HAS_JOYSTICK
-  #define PRESS_LABEL "press Enter"
+  #define PRESS_LABEL "srodek"
 #else
-  #define PRESS_LABEL "long press"
+  #define PRESS_LABEL "przytrzymaj"
 #endif
 
 #include "icons.h"
@@ -97,6 +121,8 @@ public:
 class HomeScreen : public UIScreen {
   enum HomePage {
     FIRST,
+    MAPPER,       // SF6 Mapper: stan (srodek joysticka = menu mappera)
+    MAPPER_RCV,   // SF6 Mapper: ostatnie odpowiedzi repeaterow
     RECENT,
     RADIO,
     BLUETOOTH,
@@ -107,7 +133,6 @@ class HomeScreen : public UIScreen {
 #if UI_SENSORS_PAGE == 1
     SENSORS,
 #endif
-    MAPPER,       // SF6 Mapper w urzadzeniu
     SHUTDOWN,
     Count    // keep as last
   };
@@ -118,6 +143,8 @@ class HomeScreen : public UIScreen {
   NodePrefs* _node_prefs;
   uint8_t _page;
   bool _shutdown_init;
+  bool _mm = false;     // menu mappera otwarte
+  uint8_t _msel = 0;    // zaznaczona pozycja menu mappera
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
@@ -245,7 +272,7 @@ public:
       if (_task->hasConnection()) {
         display.setColor(UIColor::warning_txt);
         display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, 43, "< Connected >");
+        display.drawTextCentered(display.width() / 2, 43, "< Polaczono >");
 
       } else if (the_mesh.getBLEPin() != 0) { // BT pin
         display.setColor(UIColor::warning_txt);
@@ -295,7 +322,7 @@ public:
       sprintf(tmp, "TX: %ddBm", _node_prefs->tx_power_dbm);
       display.print(tmp);
       display.setCursor(0, 53);
-      sprintf(tmp, "Noise floor: %d", radio_driver.getNoiseFloor());
+      sprintf(tmp, "Szum: %d", radio_driver.getNoiseFloor());
       display.print(tmp);
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(UIColor::corp_blue);
@@ -304,7 +331,7 @@ public:
           32, 32);
       display.setColor(UIColor::secondary_txt);
       display.setTextSize(1);
-      display.drawTextCentered(display.width() / 2, 64 - 11, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 64 - 11, "zmien: " PRESS_LABEL);
     } else if (_page == HomePage::ADVERT) {
       display.setColor(UIColor::corp_blue);
       display.drawXbm((display.width() - 32) / 2, 18, advert_icon, 32, 32);
@@ -319,22 +346,22 @@ public:
 #ifdef PIN_GPS_SWITCH
       bool hw_gps_state = digitalRead(PIN_GPS_SWITCH);
       if (gps_state != hw_gps_state) {
-        strcpy(buf, gps_state ? "gps off(hw)" : "gps off(sw)");
+        strcpy(buf, gps_state ? "GPS wyl(hw)" : "GPS wyl(sw)");
       } else {
-        strcpy(buf, gps_state ? "gps on" : "gps off");
+        strcpy(buf, gps_state ? "GPS wl" : "GPS wyl");
       }
 #else
-      strcpy(buf, gps_state ? "gps on" : "gps off");
+      strcpy(buf, gps_state ? "GPS wl" : "GPS wyl");
 #endif
       display.setColor(UIColor::primary_txt);
       display.drawTextLeftAlign(0, y, buf);
       if (nmea == NULL) {
         y = y + 12;
         display.setColor(UIColor::secondary_txt);
-        display.drawTextLeftAlign(0, y, "Can't access GPS");
+        display.drawTextLeftAlign(0, y, "Brak GPS");
       } else {
         display.setColor(UIColor::primary_txt);
-        strcpy(buf, nmea->isValid()?"fix":"no fix");
+        strcpy(buf, nmea->isValid()?"fix":"brak fix");
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
         display.setColor(UIColor::secondary_txt);
@@ -344,14 +371,14 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
         display.setColor(UIColor::secondary_txt);
-        display.drawTextLeftAlign(0, y, "pos");
+        display.drawTextLeftAlign(0, y, "poz");
         display.setColor(UIColor::primary_txt);
         sprintf(buf, "%.4f %.4f",
           nmea->getLatitude()/1000000., nmea->getLongitude()/1000000.);
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
         display.setColor(UIColor::secondary_txt);
-        display.drawTextLeftAlign(0, y, "alt");
+        display.drawTextLeftAlign(0, y, "wys");
         display.setColor(UIColor::primary_txt);
         sprintf(buf, "%.2f", nmea->getAltitude()/1000.);
         display.drawTextRightAlign(display.width()-1, y, buf);
@@ -432,6 +459,24 @@ public:
       if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
       else sensors_scroll_offset = 0;
 #endif
+    } else if (_page == HomePage::MAPPER && _mm) {
+      // menu mappera
+      static const char* const L[4] = {"Mapowanie", "Ping co", "Dzwiek", "Wyjscie"};
+      char v[16];
+      display.setTextSize(1);
+      for (int i = 0; i < 4; i++) {
+        int y = 20 + i * 11;
+        v[0] = 0;
+        if (i == 0) strcpy(v, (map_stop_armed && millis() - map_stop_armed < UI_STOP_CONFIRM_MS) ? "STOP? OK" : mapper.isRunning() ? "WL" : "STOP");
+        if (i == 1) snprintf(v, sizeof(v), "%d s", mapper.getInterval());
+        if (i == 2) strcpy(v, mapper.soundOn() ? "WL" : "WYL");
+        if (i == _msel) { display.setColor(UIColor::primary_txt); display.fillRect(0, y - 1, display.width(), 10); display.setColor(UIColor::window_bkg); }
+        else display.setColor(UIColor::primary_txt);
+        display.setCursor(2, y);
+        display.print(L[i]);
+        if (v[0]) display.drawTextRightAlign(display.width() - 3, y, v);
+      }
+      display.setColor(UIColor::primary_txt);
     } else if (_page == HomePage::MAPPER) {
       MapperView v;
       mapper.getView(v);
@@ -439,7 +484,7 @@ public:
       display.setColor(UIColor::primary_txt);
       display.setTextSize(1);
       display.setCursor(0, 20);
-      display.print("SF6 Mapper:");
+      display.print("SF6 Mapper");
       display.drawTextRightAlign(display.width() - 1, 20, v.run ? "WL" : "STOP");
       const char* st = !v.run ? "wylaczony" : !v.radio_ok ? "radio nie SF6!" : v.log_full ? "pamiec pelna!"
                      : v.phone_mapping ? "mapuje telefon" : !v.gps_fix ? "czekam na GPS" : v.stationary ? "pauza (postoj)"
@@ -453,14 +498,35 @@ public:
       }
 #endif
       display.setCursor(0, 40);
-      snprintf(b, sizeof(b), "ping %lu/%lu  co %ds", (unsigned long)v.hits, (unsigned long)v.pings, v.interval_s);
+      snprintf(b, sizeof(b), "odp %lu/%lu  sat %d", (unsigned long)v.hits, (unsigned long)v.pings, v.sats);
       display.print(b);
       display.setCursor(0, 50);
-      if (v.last_n > 0) {
-        int t = (int)v.last_snr_x4 * 10 / 4;
-        snprintf(b, sizeof(b), "%02X%02X %s%d.%d  wysl:%lu", v.last_prefix[0], v.last_prefix[1], t < 0 ? "-" : "+", abs(t) / 10, abs(t) % 10, (unsigned long)v.pending);
-      } else snprintf(b, sizeof(b), "do wyslania: %lu", (unsigned long)v.pending);
+      snprintf(b, sizeof(b), "do wyslania: %lu", (unsigned long)v.pending);
       display.print(b);
+      display.drawTextCentered(display.width() / 2, 64 - 3, "");
+    } else if (_page == HomePage::MAPPER_RCV) {
+      // ostatnie odpowiedzi repeaterow (czas lokalny, 2 bajty klucza, SNR)
+      display.setColor(UIColor::primary_txt);
+      display.setTextSize(1);
+      display.setCursor(0, 20);
+      display.print("Ostatnie RPT");
+      const MapperRecent* r = mapper.recent();
+      int shown = 0;
+      char b[32];
+      for (int i = 0; i < CMAP_RECENT && shown < 4; i++) {
+        if (!r[i].valid) continue;
+        int y = 30 + shown * 9;
+        uint8_t hh, mm;
+        mapperLocalHM(r[i].ts, &hh, &mm);
+        int t = (int)r[i].snr_x4 * 10 / 4;
+        snprintf(b, sizeof(b), "%02u:%02u %02X%02X", hh, mm, r[i].prefix[0], r[i].prefix[1]);
+        display.setCursor(0, y);
+        display.print(b);
+        snprintf(b, sizeof(b), "%s%d.%d", t < 0 ? "-" : "+", abs(t) / 10, abs(t) % 10);
+        display.drawTextRightAlign(display.width() - 1, y, b);
+        shown++;
+      }
+      if (!shown) display.drawTextCentered(display.width() / 2, 40, "brak odpowiedzi");
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::corp_blue);
       display.setTextSize(1);
@@ -477,6 +543,25 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (_mm) {                                  // menu mappera: gora/dol (T-Echo: klik/dwuklik), OK zmienia, lewo wychodzi
+      if (c == KEY_UP || c == KEY_PREV)   { _msel = (_msel + 3) % 4; map_stop_armed = 0; return true; }
+      if (c == KEY_DOWN || c == KEY_NEXT) { _msel = (_msel + 1) % 4; map_stop_armed = 0; return true; }
+      if (c == KEY_LEFT || c == KEY_CANCEL) { _mm = false; return true; }
+      if (c == KEY_ENTER || c == KEY_RIGHT) {
+        if (_msel == 0) {
+          if (!mapper.isRunning()) { mapper.setRunning(true); map_stop_armed = 0; _task->showAlert("Mapper WL + GPS", 1000); }
+          else if (map_stop_armed && millis() - map_stop_armed < UI_STOP_CONFIRM_MS) { mapper.setRunning(false); map_stop_armed = 0; _task->showAlert("Mapper STOP", 1000); }
+          else map_stop_armed = millis();
+        } else if (_msel == 1) {
+          int s = mapper.getInterval() + 10; if (s > 60) s = 20;
+          mapper.setInterval(s);
+        } else if (_msel == 2) {
+          mapper.setSound(!mapper.soundOn());
+        } else { _mm = false; }
+        return true;
+      }
+      return true;
+    }
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
@@ -484,7 +569,7 @@ public:
     if (c == KEY_NEXT || c == KEY_RIGHT) {
       _page = (_page + 1) % HomePage::Count;
       if (_page == HomePage::RECENT) {
-        _task->showAlert("Recent adverts", 800);
+        _task->showAlert("Ostatnio slyszane", 800);
       }
       return true;
     }
@@ -519,18 +604,7 @@ public:
     }
 #endif
     if (c == KEY_ENTER && _page == HomePage::MAPPER) {
-      if (!mapper.isRunning()) {
-        mapper.setRunning(true);
-        map_stop_armed = 0;
-        _task->showAlert("Mapper WL", 1000);
-      } else if (map_stop_armed && millis() - map_stop_armed < UI_STOP_CONFIRM_MS) {
-        mapper.setRunning(false);                   // drugie nacisniecie = potwierdzenie STOP
-        map_stop_armed = 0;
-        _task->showAlert("Mapper STOP", 1000);
-      } else {
-        map_stop_armed = millis();
-        _task->showAlert("STOP? jeszcze raz", UI_STOP_CONFIRM_MS);
-      }
+      _mm = true; _msel = 0; map_stop_armed = 0;   // otworz menu mappera
       return true;
     }
     if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
@@ -632,11 +706,32 @@ public:
   }
 };
 
+void mapperUiHit() { if (g_ui) g_ui->mapperBeep(); }
+
+// sygnal mappera: gra takze przy wyciszonym dzwieku wiadomosci (wlaczasz/wylaczasz w menu mappera)
+void UITask::mapperBeep() {
+#ifdef PIN_BUZZER
+  if (buzzer.isPlaying()) return;
+  if (buzzer.isQuiet()) { buzzer.quiet(false); map_beep_restore = true; }
+  buzzer.play("hit:d=16,o=6,b=180:c,e");
+#endif
+}
+void UITask::mapperBeepLoop() {
+#ifdef PIN_BUZZER
+  if (map_beep_restore && !buzzer.isPlaying()) { map_beep_restore = false; buzzer.quiet(_node_prefs->buzzer_quiet); }
+#endif
+}
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
+  g_ui = this;
   _display = display;
   _sensors = sensors;
   _auto_off = millis() + AUTO_OFF_MILLIS;
 
+#ifdef CMAP_UPDOWN
+  joy_up.begin();
+  joy_down.begin();
+#endif
 #if defined(PIN_USER_BTN)
   user_btn.begin();
 #endif
@@ -831,6 +926,10 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     c = handleTripleClick(KEY_SELECT);
   }
+#ifdef CMAP_UPDOWN
+  if (joy_up.check() == BUTTON_EVENT_CLICK) c = checkDisplayOn(KEY_UP);
+  if (joy_down.check() == BUTTON_EVENT_CLICK) c = checkDisplayOn(KEY_DOWN);
+#endif
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -899,6 +998,7 @@ void UITask::loop() {
 #ifdef PIN_BUZZER
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
+  mapperBeepLoop();
 
   if (curr) curr->poll();
 
@@ -1027,7 +1127,7 @@ void UITask::toggleGPS() {
           notify(UIEventType::ack);
         }
         the_mesh.savePrefs();
-        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
+        showAlert(_node_prefs->gps_enabled ? "GPS: WL" : "GPS: WYL", 800);
         _next_refresh = 0;
         break;
       }

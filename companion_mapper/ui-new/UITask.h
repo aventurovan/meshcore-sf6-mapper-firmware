@@ -95,6 +95,8 @@ public:
   void msgRead(int msgcount) override;
   void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
   void notify(UIEventType t = UIEventType::none) override;
+  void mapperBeep();                 // SF6 Mapper: sygnal przy odpowiedzi repeatera
+  void mapperBeepLoop();
   void loop() override;
 
   void shutdown(bool restart = false);

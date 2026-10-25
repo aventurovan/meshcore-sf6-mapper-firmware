@@ -23,8 +23,9 @@ static double distM(int32_t a1, int32_t o1, int32_t a2, int32_t o2) {
 CompanionMapper::CompanionMapper() : _host(NULL), _cfgfs(NULL), _run(false), _interval(MAP_INTERVAL_DEFAULT), _session(0),
   _next_ping(0), _last_ping(0), _collect_until(0), _phone_ping_at(0), _collecting(false), _tag(0), _resp_n(0),
   _have_pos(false), _last_lat(0), _last_lon(0), _still(0), _mv_count(0), _mv_head(0), _mv_next(0), _fix_since(0),
-  _sync(false), _sync_next(0), _sync_last(0), _sync_left(0), _sync_sent(0), _pings(0), _hits(0), _last_n(-1), _last_snr(0) {
+  _sync(false), _sync_next(0), _sync_last(0), _sync_left(0), _sync_sent(0), _pings(0), _hits(0), _last_n(-1), _last_snr(0), _sound(true) {
   memset(_lim, 0, sizeof(_lim));
+  memset(_recent, 0, sizeof(_recent));
   _last_prefix[0] = _last_prefix[1] = 0;
 }
 
@@ -34,26 +35,29 @@ void CompanionMapper::begin(MapperHost* host, FILESYSTEM* logfs, FILESYSTEM* cfg
   loadSettings();
   _session++; saveSettings();                       // kazde wlaczenie = nowa sesja
   _next_ping = millis() + 5000;
+  if (_run) _host->mpSetGps(true);                  // mapper wlaczony przed restartem: GPS musi dzialac
 }
 
 void CompanionMapper::loadSettings() {
   File f = _cfgfs->open(CMAP_SETTINGS, FILE_O_READ);
   if (!f) return;
-  uint8_t b[4];
-  if (f.read(b, 4) == 4 && b[0] == CMAP_MAGIC) {
+  uint8_t b[5];
+  int n = f.read(b, 5);
+  if (n >= 4 && b[0] == CMAP_MAGIC) {
     _run = b[1] != 0;
     if (mapIntervalValid(b[2])) _interval = b[2];
     _session = b[3];
+    if (n >= 5) _sound = b[4] != 0;
   }
   f.close();
 }
 
 void CompanionMapper::saveSettings() {
-  uint8_t b[4] = { CMAP_MAGIC, (uint8_t)(_run ? 1 : 0), _interval, _session };
+  uint8_t b[5] = { CMAP_MAGIC, (uint8_t)(_run ? 1 : 0), _interval, _session, (uint8_t)(_sound ? 1 : 0) };
   _cfgfs->remove(CMAP_SETTINGS);
   File f = _cfgfs->open(CMAP_SETTINGS, FILE_O_WRITE);
   if (!f) return;
-  f.write(b, 4);
+  f.write(b, 5);
   f.close();
 }
 
@@ -61,6 +65,13 @@ void CompanionMapper::setRunning(bool on) {
   _run = on;
   if (on) { _next_ping = millis(); _still = 0; }
   saveSettings();
+  if (_host) _host->mpSetGps(on);                   // mapper wl. = GPS wl., mapper STOP = GPS wyl.
+}
+
+void CompanionMapper::setInterval(int s) {
+  if (!mapIntervalValid(s)) return;
+  _interval = (uint8_t) s; saveSettings();
+  if (_last_ping && _still < CMAP_STATIONARY) _next_ping = _last_ping + (unsigned long) _interval * 1000UL;
 }
 
 bool CompanionMapper::gpsFix() {
@@ -180,6 +191,16 @@ void CompanionMapper::finishPing() {
     for (int i = 1; i < _resp_n; i++) if (_resp[i].snr_rx > _resp[best].snr_rx) best = i;
     _last_prefix[0] = _resp[best].prefix[0]; _last_prefix[1] = _resp[best].prefix[1];
     _last_snr = _resp[best].snr_rx;
+    // ostatnie repeatery (bez powtorzen, najnowszy na gorze)
+    for (int k = _resp_n - 1; k >= 0; k--) {
+      int i = (k == 0) ? best : (k == best ? 0 : k);   // najlepszy trafia na sama gore
+      int pos = CMAP_RECENT - 1;
+      for (int j = 0; j < CMAP_RECENT; j++) if (_recent[j].valid && memcmp(_recent[j].prefix, _resp[i].prefix, 2) == 0) { pos = j; break; }
+      for (int j = pos; j > 0; j--) _recent[j] = _recent[j - 1];
+      _recent[0].valid = true; _recent[0].ts = _hdr.ts; _recent[0].snr_x4 = _resp[i].snr_rx;
+      memcpy(_recent[0].prefix, _resp[i].prefix, 2);
+    }
+    if (_sound) mapperUiHit();
   }
   _tag = 0;
 }
@@ -272,8 +293,7 @@ bool CompanionMapper::handleCmd(const uint8_t* cmd, size_t len) {
     }
     case CMD_MAP_SET_INTERVAL: {
       if (len < 2 || !mapIntervalValid(cmd[1])) { sendErr(ser, MAP_ERR_BAD_ARGS); return true; }
-      _interval = cmd[1]; saveSettings();
-      if (_last_ping && _still < CMAP_STATIONARY) _next_ping = _last_ping + (unsigned long) _interval * 1000UL;
+      setInterval(cmd[1]);
       uint8_t f[2] = { RESP_MAP_INTERVAL, _interval };
       ser->writeFrame(f, 2);
       return true;
