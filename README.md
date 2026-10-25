@@ -1,7 +1,31 @@
-# SF6 Mapper – firmware dla Seeed Wio Tracker L1 / L1 Pro
+# MeshCore SF6 Mapper – firmware
 
-Samodzielny tracker do mapowania zasięgu sieci MeshCore Południe (SF6).
-Działa bez telefonu. Dane zrzuca się później przez BLE do aplikacji Mapper SF6.
+Firmware do mapowania zasięgu sieci **MeshCore Południe (SF6)**. Dane z urządzeń zrzuca się przez Bluetooth do aplikacji
+**Mapper SF6** (https://meshcoresouth.pl/mapper/, Android, iPhone).
+
+| Firmware | Urządzenie | Plik |
+|---|---|---|
+| **SF6 Mapper (tracker)** – samodzielny tracker, tylko mapuje | Seeed Wio Tracker L1 / L1 Pro | `SF6Mapper-WioTrackerL1-<wersja>.uf2` |
+| **Companion + SF6 Mapper** – zwykły companion MeshCore z mapowaniem bez telefonu | Seeed Wio Tracker L1 / L1 Pro | `Companion-SF6Mapper-WioTrackerL1-<wersja>.uf2` |
+| **Companion + SF6 Mapper** | LilyGO T-Echo | `Companion-SF6Mapper-T-Echo-<wersja>.uf2` |
+
+## Pobieranie i wgrywanie
+
+**Najnowsze pliki:** [Releases → „Najnowszy build”](../../releases/tag/latest-build). Każdy plik pobierasz osobno, bez ZIP-a,
+a strona aktualizuje się sama po każdej zmianie w repo. Wydania z numerem wersji (np. v1.1.2) są w [Releases](../../releases).
+
+1. Podłącz urządzenie przez USB.
+2. Kliknij szybko **dwa razy reset**. Pojawi się dysk USB.
+3. Przeciągnij na niego plik `.uf2`. Urządzenie samo się zrestartuje.
+
+Pliki `…-ota.zip` służą do aktualizacji przez Bluetooth (np. nRF Connect). Zwykle nie są potrzebne.
+Jeśli Chrome zablokuje pobieranie, w `chrome://downloads` kliknij przy pliku „Zachowaj”.
+
+---
+
+# SF6 Mapper (tracker) – Seeed Wio Tracker L1 / L1 Pro
+
+Samodzielny tracker do mapowania zasięgu. Działa bez telefonu, a dane zrzuca się później przez BLE do aplikacji Mapper SF6.
 
 ## Co robi
 
@@ -78,17 +102,11 @@ dostaje znacznik. Na serwerze trafia on do kolumny `lim`, a w eksporcie do kolum
 
 ## Budowanie
 
-Repozytorium zawiera tylko kod mappera. Workflow `.github/workflows/build.yml`
-pobiera MeshCore w przypiętej wersji (`MESHCORE_REF`), wstawia mapper do
-`examples/sf6_mapper` i buduje firmware. Rusza sam po każdym pushu na `main`,
-a ręcznie przez Actions → „Build SF6 Mapper” → Run workflow. Gotowy plik `.uf2`
-pobierzesz z sekcji *Artifacts* danego przebiegu.
-
-## Wgrywanie
-
-1. Podłącz tracker przez USB.
-2. Kliknij szybko dwa razy reset. Pojawi się dysk USB.
-3. Przeciągnij na niego plik `.uf2`.
+Repozytorium zawiera tylko kod mappera. Workflow `.github/workflows/build.yml` pobiera MeshCore w przypiętej wersji
+(`MESHCORE_REF`), wstawia `sf6_mapper/` i `companion_mapper/` do `examples/` i buduje trzy firmware: tracker Wio,
+companion Wio i companion T-Echo. Rusza sam po każdym pushu na `main`, a ręcznie przez Actions → „Build SF6 Mapper”
+→ Run workflow. Gotowe pliki trafiają do wydania **„Najnowszy build”** (tag `latest-build`, nadpisywany przy każdym
+buildzie) oraz do *Artifacts* przebiegu.
 
 ## Bezpieczeństwo (od 1.1.3)
 
@@ -174,7 +192,7 @@ Protokół zrzutu jest ten sam co w trackerze (`sf6_mapper/PROTOCOL.md`). W HELL
 („companion z mapperem”), a zmiana nazwy działa przez aplikację MeshCore.
 
 Kod: `companion_mapper/` (kopia `examples/companion_radio` z MeshCore + `CompanionMapper.*`), środowisko
-`WioTrackerL1_companion_mapper_ble` w `platformio-sf6.ini`. Workflow buduje oba firmware naraz.
+`WioTrackerL1_companion_mapper_ble` w `platformio-sf6.ini`. Workflow buduje wszystkie firmware naraz.
 
 ## LilyGO T-Echo
 
@@ -182,7 +200,9 @@ Ten sam „Companion + SF6 Mapper” jest budowany także dla **LilyGO T-Echo** 
 środowisko `LilyGo_T-Echo_companion_mapper_ble`):
 
 - **Ekran:** e-papier, interfejs oficjalnego companiona MeshCore dla T-Echo plus strona **„SF6 Mapper”**.
-- **Przycisk:** krótkie naciśnięcie przełącza strony, przytrzymanie na stronie „SF6 Mapper” włącza lub wyłącza mapper.
+- **Przycisk:** krótkie naciśnięcie przełącza strony. Przytrzymanie na stronie „SF6 Mapper” otwiera menu mappera,
+  w którym kliknięcie przechodzi niżej, dwuklik wyżej, a przytrzymanie zmienia wartość. Blokadę zdejmujesz przytrzymaniem przez 3 s.
+- **Dźwięk:** T-Echo nie ma buzzera, więc piknięcia przy odpowiedzi repeatera nie ma.
 - **Odliczanie:** na e-papierze nie ma odliczania sekund do pingu, bo każda zmiana wymaga odświeżenia ekranu.
 - **Bez zmian względem Wio:** GPS, flash QSPI, 500 kontaktów, zrzut danych do aplikacji Mapper SF6.
 
