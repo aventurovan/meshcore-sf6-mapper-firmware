@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.5.4"
+#define UI_VERSION       "1.5.5"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -653,6 +653,11 @@ void UITask::homeKey(char k) {
   if (k == 'B') { if (_page != P_START) { _page = P_START; _sel = 0; _top = 0; } return; }
   int count = _page == P_MSGS ? _mrow_n : _page == P_CONTACTS ? _ct_n + 1 : _page == P_RPT ? _rpt_n + 1 : _page == P_SET ? menuCount(0) : 0;
   if (_page == P_MAPPER && (k == 'U' || k == 'D')) { _mapper_list = (k == 'D'); return; }
+  if (_page == P_START && (k == 'U' || k == 'D')) {
+    unsigned long now = millis();
+    uint8_t cur = (now - _start_manual < 30000UL) ? _start_card : (uint8_t)((now / 10000UL) % 4);
+    _start_card = (cur + (k == 'D' ? 1 : 3)) % 4; _start_manual = now; return;
+  }
   if ((k == 'U' || k == 'D') && count > 0) {
     _sel = (_sel + (k == 'D' ? 1 : count - 1)) % count;
     if (_sel < _top) _top = _sel;
@@ -1089,29 +1094,75 @@ static void titleRow(MapperGfx& g, const char* t, const char* right) {
   g.hline(0, 21, 128);
 }
 
+// Start: 4 karty zmieniane co 10 s (gora/dol przelacza recznie i wstrzymuje obracanie na 30 s)
 void UITask::drawStart() {
   char b[40], nm[32];
   cleanText(nm, sizeof(nm), _prefs->node_name);
   _g.textCenter(64, 12, nm);
-  fmtHM(b, sizeof(b), rtc_clock.getCurrentTime());
-  _g.textCenter(64, 22, b, 2);
-  int un = unreadCount();
-  if (un && _thread_n) {
-    const char* who = _threads[0];
-    for (int t = 0; t < _thread_n; t++) if (unreadCount(_threads[t])) { who = _threads[t]; break; }
-    _g.frame(0, 41, 9, 7); for (int i = 0; i < 4; i++) { _g.rect(1 + i, 42 + i, 1, 1); _g.rect(7 - i, 42 + i, 1, 1); }
-    char w[24]; MapperGfx::fit(w, sizeof(w), who, 60);
-    snprintf(b, sizeof(b), "%d %s · %s", un, un == 1 ? "nowa" : "nowe", w);
-    _g.text(12, 40, b);
-  } else _g.text(0, 40, "brak nowych wiadomości");
+  unsigned long now = millis();
+  uint8_t card = (now - _start_manual < 30000UL) ? _start_card : (uint8_t)((now / 10000UL) % 4);
+  // dane wspolne
   MapperView v; mapper.getView(v);
-  if (v.run) {
-    _g.rect(1, 52, 4, 4);
-    const char* st = !v.radio_ok ? "radio nie SF6!" : !v.gps_fix ? "czekam na GPS" : v.phone_mapping ? "mapuje telefon"
-                   : v.stationary ? "pauza (postój)" : "mapuje";
-    snprintf(b, sizeof(b), "%s · %lu/%lu", st, (unsigned long) v.hits, (unsigned long) v.pings);
-    _g.text(8, 50, b);
-  } else _g.text(0, 50, "mapper wyłączony");
+  int un = unreadCount();
+  const char* mst = !v.run ? "mapper wyłączony" : !v.radio_ok ? "radio nie SF6!" : !v.gps_fix ? "czekam na GPS" : v.phone_mapping ? "mapuje telefon"
+                  : v.stationary ? "pauza (postój)" : "mapuje";
+  char last[24] = "", lsnr[12] = "", ldist[14] = "";
+  if (v.last_n > 0) {
+    rptName(v.last_prefix, last, sizeof(last)); fmtSnr(lsnr, sizeof(lsnr), v.last_snr_x4);
+    int ri = -1; for (int i = 0; i < _rpt_n; i++) if (_rpts[i].key[0] == v.last_prefix[0] && _rpts[i].key[1] == v.last_prefix[1]) { ri = i; break; }
+    if (ri >= 0 && _rpts[ri].dist_m >= 0) fmtDist(ldist, sizeof(ldist), _rpts[ri].dist_m);
+  }
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  uint16_t mv = getBattMilliVolts();
+  const UiMsg* lm = NULL; for (int i = _msg_n - 1; i >= 0; i--) if (!_msgs[i].mine) { lm = &_msgs[i]; break; }
+  // kropki kart
+  for (int i = 0; i < 4; i++) { if (i == card) _g.rect(58 + i * 4, 62, 3, 2); else _g.rect(59 + i * 4, 62, 1, 2); }
+
+  if (card == 0) {                                  // przeglad
+    if (last[0]) { char lf[20]; MapperGfx::fit(lf, sizeof(lf), last, 60); _g.text(0, 23, lf); snprintf(b, sizeof(b), "%s %s", lsnr, ldist); _g.textRight(127, 23, b); }
+    else _g.text(0, 23, "brak odpowiedzi RPT");
+    if (v.run) { snprintf(b, sizeof(b), "%s %lu/%lu", mst, (unsigned long) v.hits, (unsigned long) v.pings); } else strcpy(b, mst);
+    _g.text(0, 33, b); snprintf(b, sizeof(b), "wysł. %lu", (unsigned long) v.pending); _g.textRight(127, 33, b);
+    snprintf(b, sizeof(b), "GPS %d sat", l ? (int) l->satellitesCount() : 0); _g.text(0, 43, b);
+    snprintf(b, sizeof(b), "%d,%02d V%s", mv / 1000, (mv % 1000) / 10, usbPowered() ? " USB" : ""); _g.textRight(127, 43, b);
+    if (lm) { char t[24]; MapperGfx::fit(t, sizeof(t), lm->text, 90); char w[12]; MapperGfx::fit(w, sizeof(w), lm->thread, 30); snprintf(b, sizeof(b), "%s: %s", w, t); char bf[40]; MapperGfx::fit(bf, sizeof(bf), b, 126); _g.text(0, 52, bf); }
+    else _g.text(0, 52, "brak wiadomości");
+  } else if (card == 1) {                           // ostatnia wiadomosc
+    _g.hline(0, 21, 128);
+    if (lm) {
+      char t[16]; fmtHM(t, sizeof(t), lm->ts); char w[24]; MapperGfx::fit(w, sizeof(w), lm->thread, 84);
+      _g.text(0, 24, w); _g.textRight(127, 24, t);
+      char lines[4][32]; int nl = wrapText(lm->text, lines, 2, 21);
+      for (int i = 0; i < nl; i++) _g.text(0, 34 + i * 9, lines[i]);
+    } else _g.textCenter(64, 34, "brak wiadomości");
+    if (v.run) { _g.rect(1, 54, 4, 4); snprintf(b, sizeof(b), "%s %lu/%lu", mst, (unsigned long) v.hits, (unsigned long) v.pings); _g.text(8, 52, b); if (lsnr[0]) _g.textRight(127, 52, lsnr); }
+    else _g.text(0, 52, mst);
+  } else if (card == 2) {                           // mapper
+    _g.hline(0, 21, 128);
+    snprintf(b, sizeof(b), "%lu", (unsigned long) v.hits); _g.text(0, 24, b, 2);
+    int x = _g.textWidth(b, 2) + 2; snprintf(b, sizeof(b), "/%lu", (unsigned long) v.pings); _g.text(x, 24, b); _g.text(x, 32, "odp.");
+    snprintf(b, sizeof(b), "%lu", (unsigned long) v.pending); int wv = _g.textWidth(b, 2); _g.text(127 - wv - 26, 24, b, 2); _g.text(104, 24, "do"); _g.text(104, 32, "wysł.");
+    if (last[0]) { char lf[20]; MapperGfx::fit(lf, sizeof(lf), last, 66); _g.text(0, 43, lf); snprintf(b, sizeof(b), "%s %s", lsnr, ldist); _g.textRight(127, 43, b); }
+    else _g.text(0, 43, mst);
+    if (un) { char w[12]; MapperGfx::fit(w, sizeof(w), lm ? lm->thread : "", 48); snprintf(b, sizeof(b), "%d nowe: %s", un, w); } else strcpy(b, "brak nowych");
+    _g.text(0, 52, b); snprintf(b, sizeof(b), "%d sat", l ? (int) l->satellitesCount() : 0); _g.textRight(127, 52, b);
+  } else {                                          // wykres ostatnich pingow
+    int n; const int8_t* h = mapper.pingHist(&n);
+    _g.text(0, 23, "ostatnie pingi:");
+    _g.hline(0, 40, 128);
+    for (int i = 0; i < n; i++) {
+      int x = 2 + i * 12;
+      if (h[i] == -128) { _g.rect(x, 39, 8, 1); continue; }
+      int hh = (h[i] + 40) / 10;                    // -10 dB → 0 px, +15 dB → 10 px
+      if (hh < 1) hh = 1; if (hh > 10) hh = 10;
+      _g.rect(x, 40 - hh, 8, hh);
+    }
+    if (!n) _g.text(0, 31, "(jeszcze brak)");
+    if (last[0]) { char lf[20]; MapperGfx::fit(lf, sizeof(lf), last, 60); _g.text(0, 43, lf); snprintf(b, sizeof(b), "%s %s", ldist, lsnr); _g.textRight(127, 43, b); }
+    else _g.text(0, 43, mst);
+    if (un) { char w[12]; MapperGfx::fit(w, sizeof(w), lm ? lm->thread : "", 48); snprintf(b, sizeof(b), "%d nowe · %s", un, w); } else strcpy(b, "brak nowych");
+    _g.text(0, 52, b); snprintf(b, sizeof(b), "wysł. %lu", (unsigned long) v.pending); _g.textRight(127, 52, b);
+  }
 }
 
 void UITask::buildMsgRows() {                  // kanaly (wszystkie skonfigurowane), potem rozmowy prywatne

@@ -116,6 +116,7 @@ private:
   void statusBar();
   void drawSplash(unsigned long t);
   void drawStart();
+  uint8_t _start_card = 0; unsigned long _start_manual = 0;   // karty Startu: zmiana co 10 s, gora/dol recznie
   void drawMsgs();
   void drawThread();
   void drawMapper();

@@ -244,6 +244,12 @@ void CompanionMapper::finishPing() {
   if (fsLow()) _fs_low = true;                      // za malo miejsca: nie zapisujemy (kontakty companiona sa wazniejsze)
   else { _fs_low = false; _log.append(_hdr, _resp); }
   _last_n = _resp_n;
+  {                                                 // historia ostatnich 10 pingow (do wykresu na Starcie)
+    int8_t best = -128;
+    for (int i = 0; i < _resp_n; i++) if (_resp[i].snr_rx > best) best = _resp[i].snr_rx;
+    if (_hist_n < 10) _hist[_hist_n++] = best;
+    else { memmove(_hist, _hist + 1, 9); _hist[9] = best; }
+  }
   if (_resp_n > 0) {
     _hits++;
     int best = 0;

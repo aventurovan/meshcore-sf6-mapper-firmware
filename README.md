@@ -147,7 +147,7 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   - **animacja startowa „MC SF6”** z falami radiowymi, nazwą i wersją, dwa piknięcia;
   - **pasek stanu** na każdym ekranie: godzina, kropka mappera (miga przy pingu), kłódka blokady, nieprzeczytane
     wiadomości, GPS z liczbą satelitów, Bluetooth (połączony = odwrócona ikona), bateria;
-  - **ekrany** (joystick lewo/prawo): **Start** (nazwa, godzina, nowe wiadomości, stan mappera) → **Wiadomości**
+  - **ekrany** (joystick lewo/prawo): **Start** (nazwa i 4 karty zmieniane co 10 s: przegląd, ostatnia wiadomość, mapper, wykres ostatnich 10 pingów; góra/dół przełącza ręcznie) → **Wiadomości**
     (najpierw wszystkie kanały, np. #Public, potem rozmowy prywatne; liczba nieprzeczytanych; kanał bez wiadomości też
     można otworzyć i napisać) → **Kontakty** (ulubione z gwiazdką na górze — także ulubione repeatery — potem ostatnio
     słyszane; przy repeaterach, pokojach i czujnikach typ zamiast czasu; OK → Napisz / Ulubiony / Zarządzaj (repeater) /

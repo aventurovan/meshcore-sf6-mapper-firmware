@@ -73,6 +73,7 @@ class CompanionMapper {
   uint8_t _last_prefix[2];
   int8_t _last_snr;
   bool _sound;
+  int8_t _hist[10]; int _hist_n = 0;
   FILESYSTEM* _logfs = NULL;
   bool _fs_low = false;
   bool fsLow();
@@ -116,6 +117,8 @@ public:
   bool soundOn() const { return _sound; }
   void setSound(bool on) { _sound = on; saveSettings(); }
   const MapperRecent* recent() const { return _recent; }
+  // ostatnie 10 pingow: najlepszy SNR x4 albo -128 = brak odpowiedzi (najnowszy na koncu)
+  const int8_t* pingHist(int* n) const { *n = _hist_n; return _hist; }
   void newSession() { _session++; _pings = 0; _hits = 0; _last_n = -1; memset(_recent, 0, sizeof(_recent)); saveSettings(); }
   void getView(MapperView& v);
 };
