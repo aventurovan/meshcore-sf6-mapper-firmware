@@ -221,6 +221,7 @@ void MapLog::compact() {
   }
   uint32_t size = src.size(), off = 0;
   uint8_t buf[1 + MAP_RECORD_MAX_LEN];
+  bool ok = true;
   while (off < size) {
     src.seek(off);
     if (src.read(buf, 1) != 1) break;
@@ -228,11 +229,12 @@ void MapLog::compact() {
     if (len < sizeof(MapRecordHdr) || len > MAP_RECORD_MAX_LEN) break;
     if (src.read(&buf[1], len) != len) break;
     MapRecordHdr* hdr = (MapRecordHdr*) &buf[1];
-    if (hdr->seq > _acked_seq) dst.write(buf, 1 + len);
+    if (hdr->seq > _acked_seq && dst.write(buf, 1 + len) != (size_t)(1 + len)) { ok = false; break; }   // brak miejsca: nie ruszamy oryginalu
     off += 1 + len;
   }
   src.close();
   dst.close();
+  if (!ok) { _fs->remove(MAP_TMP_FILE); return; }
   _fs->remove(MAP_LOG_FILE);
   _fs->rename(MAP_TMP_FILE, MAP_LOG_FILE);
   scan();

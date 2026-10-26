@@ -34,9 +34,10 @@ CompanionMapper::CompanionMapper() : _host(NULL), _cfgfs(NULL), _run(false), _in
 
 void CompanionMapper::begin(MapperHost* host, FILESYSTEM* logfs, FILESYSTEM* cfgfs) {
   _host = host; _cfgfs = cfgfs;
-  // flash QSPI jest wspolny z kontaktami i kanalami companiona: log max 512 kB (kompaktowanie potrzebuje drugie tyle)
+  // flash QSPI jest wspolny z kontaktami i kanalami companiona: log max ok. 2000 punktow (~100 kB),
+  // kompaktowanie po zrzucie potrzebuje chwilowo drugie tyle
   _logfs = logfs;
-  _log.begin(logfs, logfs == cfgfs ? 64UL * 1024UL : 512UL * 1024UL);
+  _log.begin(logfs, logfs == cfgfs ? 64UL * 1024UL : 100UL * 1024UL);
   loadSettings();
   _session++; saveSettings();                       // kazde wlaczenie = nowa sesja
   _next_ping = millis() + 5000;

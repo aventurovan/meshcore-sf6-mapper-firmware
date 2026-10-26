@@ -158,7 +158,7 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
     jednym kliknięciem, moc nadawania, własne ustawienia: częstotliwość edytowana cyfra po cyfrze, szerokość BW, SF, CR —
     zapisywane dopiero przez „Zastosuj”; domyślnie po pierwszym uruchomieniu jest preset SF6), GPS (wł./wył., pozycja w advercie), Advert (do sąsiadów / do całej sieci),
     Ekran (wygaszanie 15/30/60 s/nigdy, blokada, budzenie przy wiadomości), Dźwięk (wiadomości, mapper),
-    Informacje (przewijane góra/dół), **Odtwórz kontakty** (z kopii ostatnich 100 advertów zapisanych w urządzeniu), Hasła repeaterów, Restart, Wyłącz;
+    Informacje (przewijane góra/dół), Hasła repeaterów, Restart, Wyłącz;
   - **emotki w nazwach** (urządzenia, repeaterów, wątków) są pomijane — ekran pokazuje tylko litery, cyfry i znaki;
   - **nowa wiadomość:** okienko z nadawcą i początkiem treści, dźwięk. OK otwiera wiadomość;
   - **pisanie (od 1.3.0):** w wiadomości OK → **Napisz** (klawiatura ekranowa z polskimi literami: joystick wybiera znak,
@@ -196,7 +196,7 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   Po restarcie z włączonym mapperem GPS włącza się sam.
 - **Sygnał przy odpowiedzi repeatera** (Wio, buzzer): krótkie piknięcie. Gra także przy wyciszonych wiadomościach,
   a wyłączasz je w menu mappera. T-Echo nie ma buzzera.
-- **Mapowanie bez telefonu:** pingi co 20–60 s (tylko repeatery), zapis odpowiedzi z pozycją GPS do pamięci (od 1.5.2 maks. 512 kB, ok. 12–15 tys. punktów, bo flash QSPI jest wspólny z kontaktami i kanałami; przy mniej niż 384 kB wolnego miejsca mapper przestaje zapisywać i prosi o zrzut),
+- **Mapowanie bez telefonu:** pingi co 20–60 s (tylko repeatery), zapis odpowiedzi z pozycją GPS do pamięci (maks. ok. **2000 punktów**, bo flash QSPI jest wspólny z kontaktami i kanałami companiona; przy mniej niż 384 kB wolnego miejsca mapper przestaje zapisywać i pokazuje „pamięć pełna!” — wtedy zrzuć dane),
   pauza na postoju (te same zasady co w trackerze, punkt „Postój”), znacznik możliwego limitu repeatera. Ustawienia (WŁ/STOP, interwał, dźwięk)
   zostają po wyłączeniu.
 - **Warunki pingowania:** radio companiona musi być ustawione na preset SF6 (869,618 MHz · BW 62,5 kHz · SF6), a GPS włączony
