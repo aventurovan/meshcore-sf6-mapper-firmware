@@ -137,6 +137,15 @@ public:
   bool uiAdminNeighbours();
   bool uiAdminCli(const char* cmd);
   void uiAdminLogout() { ui_admin.active = false; ui_admin.login = 0; }
+
+  // „Usłyszane”: ostatnio odebrane adverty (takze urzadzen spoza kontaktow) — z nich tworzymy kontakty
+  #define UI_HEARD_MAX 16
+  ContactInfo ui_heard[UI_HEARD_MAX];
+  uint32_t ui_heard_at[UI_HEARD_MAX];
+  int ui_heard_n = 0;
+  bool uiIsContact(const uint8_t* key) { return lookupContactByPubKey(key, PUB_KEY_SIZE) != NULL; }
+  bool uiAddHeard(int i);
+  bool uiRemoveContact(const uint8_t* key);
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

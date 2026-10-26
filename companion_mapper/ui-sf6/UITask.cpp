@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.4.0"
+#define UI_VERSION       "1.5.0"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -192,7 +192,7 @@ void UITask::addMsg(const char* thread, const char* text, bool chan, bool mine) 
   strncpy(m.thread, thread, sizeof(m.thread) - 1); m.thread[sizeof(m.thread) - 1] = 0;
   strncpy(m.text, text, sizeof(m.text) - 1); m.text[sizeof(m.text) - 1] = 0;
   m.chan = chan; m.unread = !mine; m.mine = mine;
-  buildThreads();
+  buildMsgRows();
   _msg_save_at = millis() + 5000;
 }
 
@@ -278,8 +278,7 @@ bool UITask::sendText(const char* text) {
   else ok = the_mesh.uiSendDirectText(_compose_to, text);
   if (ok) {
     addMsg(_compose_to, text, _compose_chan, true);
-    for (int t = 0; t < _thread_n; t++) if (strcmp(_threads[t], _compose_to) == 0) { _thread_sel = t; break; }
-    _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+    openThread(_compose_to, _compose_chan);
     popup("Wysłano", _compose_to);
   } else popup("Błąd wysyłki", _compose_chan ? "brak kanału" : "brak kontaktu");
   return ok;
@@ -561,7 +560,7 @@ void UITask::key(char k) {
   if (_pop_msg && _pop_until > millis() && k == 'O') {       // OK na okienku nowej wiadomosci: otworz watek
     _pop_until = 0; _pop_msg = false;
     buildThreads();
-    _thread_sel = 0; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+    if (_msg_n) openThread(_msgs[_msg_n - 1].thread, _msgs[_msg_n - 1].chan);
     return;
   }
   _pop_until = 0;
@@ -570,14 +569,14 @@ void UITask::key(char k) {
     case SCR_MENU: menuKey(k); break;
     case SCR_THREAD: {
       int idx[UI_MSG_MAX], n = 0;
-      for (int i = 0; i < _msg_n; i++) if (strcmp(_msgs[i].thread, _threads[_thread_sel]) == 0) idx[n++] = i;
+      for (int i = 0; i < _msg_n; i++) if (strcmp(_msgs[i].thread, _cur_thread) == 0) idx[n++] = i;
       if (_thread_msg < 0 || _thread_msg >= n) _thread_msg = n - 1;
       char lines[12][32]; int nl = n ? wrapText(_msgs[idx[_thread_msg]].text, lines, 12, 21) : 0;
       if (k == 'D') { if (_thread_line + 4 < nl) _thread_line++; else if (_thread_msg < n - 1) { _thread_msg++; _thread_line = 0; } }
       else if (k == 'U') { if (_thread_line > 0) _thread_line--; else if (_thread_msg > 0) { _thread_msg--; _thread_line = 0; } }
       else if (k == 'B' || k == 'L') { _screen = SCR_HOME; _page = P_MSGS; }
-      else if (k == 'O' && n) {                   // odpowiedz: napisz / szybka odpowiedz / moja pozycja
-        composeTo(_msgs[idx[_thread_msg]].thread, _msgs[idx[_thread_msg]].chan);
+      else if (k == 'O') {                        // odpowiedz: napisz / szybka odpowiedz / moja pozycja
+        composeTo(_cur_thread, _cur_chan);
         openMenu(8);
       }
       break;
@@ -592,6 +591,18 @@ void UITask::key(char k) {
       else if (k == 'U' && _lines_top > 0) _lines_top--;
       else if (k == 'B' || k == 'L' || k == 'O') { _screen = _lines_back; }
       break;
+    case SCR_HEARD: {
+      int n = the_mesh.ui_heard_n;
+      if (k == 'U' && n) _heard_sel = (_heard_sel + n - 1) % n;
+      else if (k == 'D' && n) _heard_sel = (_heard_sel + 1) % n;
+      else if (k == 'O' && _heard_sel < n) {
+        ContactInfo& c = the_mesh.ui_heard[_heard_sel];
+        if (the_mesh.uiIsContact(c.id.pub_key)) popup("Już w kontaktach");
+        else if (the_mesh.uiAddHeard(_heard_sel)) { buildContacts(); buildRpts(); popup("Dodano do kontaktów"); }
+        else popup("Nie dodano", "lista kontaktów pełna?");
+      } else if (k == 'B' || k == 'L') { _screen = SCR_HOME; _page = P_CONTACTS; }
+      break;
+    }
     case SCR_WAIT:
       if (k == 'B' || k == 'L') { _wait_kind = 0; the_mesh.ui_admin.cli_wait = false; _screen = SCR_MENU; }
       break;
@@ -617,11 +628,12 @@ void UITask::homeKey(char k) {
     _page = (_page + (k == 'R' ? 1 : P_COUNT - 1)) % P_COUNT;
     _sel = 0; _top = 0; _mapper_list = false; _armed_item = -1;
     if (_page == P_RPT) buildRpts();
-    if (_page == P_MSGS) buildThreads();
+    if (_page == P_MSGS) buildMsgRows();
+    if (_page == P_CONTACTS) buildContacts();
     return;
   }
   if (k == 'B') { if (_page != P_START) { _page = P_START; _sel = 0; _top = 0; } return; }
-  int count = _page == P_MSGS ? _thread_n + 1 : _page == P_RPT ? _rpt_n + 1 : _page == P_SET ? menuCount(0) : 0;
+  int count = _page == P_MSGS ? _mrow_n : _page == P_CONTACTS ? _ct_n + 1 : _page == P_RPT ? _rpt_n + 1 : _page == P_SET ? menuCount(0) : 0;
   if (_page == P_MAPPER && (k == 'U' || k == 'D')) { _mapper_list = (k == 'D'); return; }
   if ((k == 'U' || k == 'D') && count > 0) {
     _sel = (_sel + (k == 'D' ? 1 : count - 1)) % count;
@@ -633,22 +645,23 @@ void UITask::homeKey(char k) {
   if (k != 'O') return;
   switch (_page) {
     case P_START:
-      if (unreadCount() > 0 && _thread_n > 0) {
-        for (int t = 0; t < _thread_n; t++) if (unreadCount(_threads[t])) { _thread_sel = t; break; }
-        _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
-      } else { _page = P_MSGS; buildThreads(); }
+      if (unreadCount() > 0) {
+        for (int i = 0; i < _msg_n; i++) if (_msgs[i].unread) { openThread(_msgs[i].thread, _msgs[i].chan); break; }
+      } else { _page = P_MSGS; buildMsgRows(); _sel = 0; _top = 0; }
       break;
     case P_MSGS:
-      if (_sel == 0) {                              // „Napisz na Public”
-        int idx = the_mesh.uiChannelIndex("Public");
-        ChannelDetails cd;
-        if (idx < 0 && the_mesh.getChannel(0, cd)) composeTo(cd.name, true); else composeTo("Public", true);
-        kbdOpen(0, SCR_HOME);
-      } else if (_sel - 1 < _thread_n) { _thread_sel = _sel - 1; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD; }
+      if (_sel < _mrow_n) openThread(_mrow[_sel], _mrow_chan[_sel]);
+      break;
+    case P_CONTACTS:
+      if (_sel == 0) { _heard_sel = 0; _screen = SCR_HEARD; }
+      else if (_sel - 1 < _ct_n) {
+        ContactInfo c;
+        if (the_mesh.getContactByIdx(_cts[_sel - 1].idx, c)) { setCur(c.id.pub_key, c.name, c.type, (c.flags & 1) != 0, 1); openMenu(15); }
+      }
       break;
     case P_RPT:
       if (_sel == 0) { mapper.scanStart(); _screen = SCR_SCAN; }
-      else if (_sel - 1 < _rpt_n) { _rpt_sel = _sel - 1; _screen = SCR_RPT; }
+      else if (_sel - 1 < _rpt_n) { _rpt_sel = _sel - 1; Rpt& rp = _rpts[_rpt_sel]; setCur(rp.key, rp.name, ADV_TYPE_REPEATER, rp.fav, 0); _screen = SCR_RPT; }
       break;
     case P_SET:
       _menu = 0; menuAction(+1);
@@ -664,6 +677,7 @@ static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
 
 int UITask::menuCount(int id) {
   static const uint8_t C[15] = { 11, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
+  if (id == 15) { uint8_t a[4]; return ctMenu(a); }
   return id >= 0 && id < 15 ? C[id] : 0;
 }
 
@@ -743,8 +757,8 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
     case 10: {
       static const char* const N[3] = { "Ulubiony", "Zaloguj jako admin", "Zaloguj jako gość" };
       strcpy(L, N[i]);
-      if (i == 0 && _rpt_sel < _rpt_n) strcpy(V, _rpts[_rpt_sel].fav ? "TAK" : "NIE");
-      if (i == 1 && _rpt_sel < _rpt_n) { char pw[24]; if (pwGet(_rpts[_rpt_sel].key, pw)) strcpy(V, "*"); }
+      if (i == 0) strcpy(V, _cur_fav ? "TAK" : "NIE");
+      if (i == 1) { char pw[24]; if (pwGet(_cur_key, pw)) strcpy(V, "*"); }
       break;
     }
     case 11: {
@@ -767,6 +781,14 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
     case 14: {
       static const char* const N[7] = { "ver", "get radio", "get tx", "get name", "stats", "clock", "> własna komenda" };
       strcpy(L, N[i]);
+      break;
+    }
+    case 15: {
+      static const char* const N[4] = { "Napisz", "Ulubiony", "Zarządzaj", "Usuń kontakt" };
+      uint8_t a[4]; int n = ctMenu(a); if (i >= n) break;
+      strcpy(L, N[a[i]]);
+      if (a[i] == 1) strcpy(V, _cur_fav ? "TAK" : "NIE");
+      if (a[i] == 3 && armed) strcpy(V, "OK?");
       break;
     }
     case 7: {
@@ -795,7 +817,8 @@ void UITask::menuKey(char k) {
   bool cyc2 = _menu == 13 && s == 1;
   if (k == 'B' || (k == 'L' && _menu >= 8 && !cyc2)) {
     if (_menu == 8 || _menu == 9) { _screen = SCR_THREAD; return; }
-    if (_menu == 10) { _screen = SCR_RPT; return; }
+    if (_menu == 10) { if (_cur_from == 1) openMenu(15); else _screen = SCR_RPT; return; }
+    if (_menu == 15) { _screen = SCR_HOME; _page = P_CONTACTS; return; }
     if (_menu == 11 || _menu == 12) { openMenu(10); return; }
     if (_menu == 13 || _menu == 14) { _menu = 11; _screen = SCR_MENU; return; }
     _screen = SCR_HOME; _page = P_SET; return;
@@ -902,15 +925,34 @@ void UITask::menuAction(int dir) {
     case 9:
       sendText(QUICK[i]);
       return;
+    case 15: {
+      uint8_t a[4]; int n = ctMenu(a); if (i >= n) return;
+      if (a[i] == 0) { composeTo(_cur_name, false); kbdOpen(0, SCR_MENU); }
+      if (a[i] == 2) { openMenu(10); }
+      if (a[i] == 1) {
+        int r = the_mesh.uiToggleFavourite(_cur_key);
+        if (r >= 0) _cur_fav = r == 1;
+        buildContacts(); buildRpts();
+        popup(r == 1 ? "Ulubiony" : r == 0 ? "Usunięto z ulubionych" : "Brak kontaktu", r == 1 ? "zawsze na górze listy" : NULL);
+      }
+      if (a[i] == 3) {
+        if (!armed) { arm(); return; }
+        _armed_item = -1;
+        bool ok = the_mesh.uiRemoveContact(_cur_key);
+        buildContacts(); buildRpts();
+        popup(ok ? "Kontakt usunięty" : "Nie usunięto");
+        _screen = SCR_HOME; _page = P_CONTACTS;
+      }
+      return;
+    }
     case 10:
-      if (_rpt_sel >= _rpt_n) return;
       if (i == 1) { adminStartLogin(true); return; }
       if (i == 2) { adminStartLogin(false); return; }
       if (i == 0) {
-        uint8_t key[32]; memcpy(key, _rpts[_rpt_sel].key, 32);
-        int r = the_mesh.uiToggleFavourite(key);
-        buildRpts();
-        int ni = rptIndexByKey(key); if (ni >= 0) _rpt_sel = ni;
+        int r = the_mesh.uiToggleFavourite(_cur_key);
+        if (r >= 0) _cur_fav = r == 1;
+        buildRpts(); buildContacts();
+        int ni = rptIndexByKey(_cur_key); if (ni >= 0) _rpt_sel = ni;
         popup(r == 1 ? "Ulubiony" : r == 0 ? "Usunięto z ulubionych" : "Brak kontaktu", r == 1 ? "zawsze na górze listy" : NULL);
       }
       return;
@@ -921,7 +963,7 @@ void UITask::menuAction(int dir) {
       if (i == 4) { the_mesh.uiAdminLogout(); _screen = SCR_RPT; popup("Wylogowano"); }
       return;
     case 12:
-      if (i == 0 && _rpt_sel < _rpt_n) { pwSet(_rpts[_rpt_sel].key, _pw_typed); popup("Hasło zapamiętane"); }
+      if (i == 0) { pwSet(_cur_key, _pw_typed); popup("Hasło zapamiętane"); }
       _menu = 11; _msel[11] = 0; _screen = SCR_MENU;
       return;
     case 13:
@@ -936,7 +978,7 @@ void UITask::menuAction(int dir) {
         snprintf(_cli_next, sizeof(_cli_next), "set lon %.6f", l->getLongitude() / 1e6);
         adminCli(c);
       }
-      if (i == 4) kbdOpen(2, SCR_MENU, _rpt_sel < _rpt_n ? _rpts[_rpt_sel].name : "");
+      if (i == 4) kbdOpen(2, SCR_MENU, _cur_name);
       if (i == 5) adminCli("clock sync");
       if (i == 6) {
         if (!armed) { arm(); return; }
@@ -973,6 +1015,7 @@ void UITask::render() {
       switch (_page) {
         case P_START: drawStart(); break;
         case P_MSGS: drawMsgs(); break;
+        case P_CONTACTS: drawContacts(); break;
         case P_MAPPER: drawMapper(); break;
         case P_RPT: drawRpts(); break;
         case P_SET: drawSettings(); break;
@@ -985,6 +1028,7 @@ void UITask::render() {
     case SCR_FREQ: drawFreq(); break;
     case SCR_KBD: break;
     case SCR_WAIT: drawWait(); break;
+    case SCR_HEARD: drawHeard(); break;
     case SCR_SCAN: drawScan(); break;
   }
   if (_pop_until > millis()) drawPopup();
@@ -1052,30 +1096,156 @@ void UITask::drawStart() {
   } else _g.text(0, 50, "mapper wyłączony");
 }
 
+void UITask::buildMsgRows() {                  // kanaly (wszystkie skonfigurowane), potem rozmowy prywatne
+  _mrow_n = 0;
+  ChannelDetails cd;
+  for (int i = 0; i < MAX_GROUP_CHANNELS && _mrow_n < 16; i++) {
+    if (!the_mesh.getChannel(i, cd)) break;
+    if (!cd.name[0]) continue;
+    strncpy(_mrow[_mrow_n], cd.name, 23); _mrow[_mrow_n][23] = 0; _mrow_chan[_mrow_n++] = true;
+  }
+  buildThreads();
+  for (int t = 0; t < _thread_n && _mrow_n < 28; t++) {
+    bool chan = false, dup = false;
+    for (int i = 0; i < _msg_n; i++) if (strcmp(_msgs[i].thread, _threads[t]) == 0) { chan = _msgs[i].chan; break; }
+    if (chan) { for (int r = 0; r < _mrow_n; r++) if (strcmp(_mrow[r], _threads[t]) == 0) dup = true; if (dup) continue; }
+    strcpy(_mrow[_mrow_n], _threads[t]); _mrow_chan[_mrow_n++] = chan;
+  }
+}
+
+void UITask::openThread(const char* name, bool chan) {
+  strncpy(_cur_thread, name, sizeof(_cur_thread) - 1); _cur_thread[sizeof(_cur_thread) - 1] = 0;
+  _cur_chan = chan; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+}
+
 void UITask::drawMsgs() {
   titleRow(_g, "< Wiadomości >", NULL);
-  int n = _thread_n + 1;
-  if (_sel >= n) _sel = n - 1;
+  if (!_mrow_n) buildMsgRows();
+  if (!_mrow_n) { _g.textCenter(64, 34, "brak kanałów"); return; }
+  if (_sel >= _mrow_n) _sel = _mrow_n - 1;
   for (int r = 0; r < ROWS; r++) {
-    int i = _top + r; if (i >= n) break;
+    int i = _top + r; if (i >= _mrow_n) break;
     int y = 24 + r * ROW_H;
-    char nm[24], c[8]; c[0] = 0;
-    if (i == 0) strcpy(nm, "> Napisz na Public");
-    else { MapperGfx::fit(nm, sizeof(nm), _threads[i - 1], 100); int u = unreadCount(_threads[i - 1]); if (u) snprintf(c, sizeof(c), "%d", u); }
+    char nm[28], t[24], c[8]; c[0] = 0;
+    MapperGfx::fit(t, sizeof(t), _mrow[i], 96);
+    if (_mrow_chan[i] && t[0] != '#') snprintf(nm, sizeof(nm), "#%s", t); else strcpy(nm, t);
+    int u = unreadCount(_mrow[i]); if (u) snprintf(c, sizeof(c), "%d", u);
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
     _g.text(2, y, nm); if (c[0]) _g.textRight(125, y, c);
     if (i == _sel) _g.color(true);
   }
 }
 
+// ---------------- kontakty ----------------
+void UITask::setCur(const uint8_t* key, const char* name, uint8_t type, bool fav, uint8_t from) {
+  memcpy(_cur_key, key, 32);
+  strncpy(_cur_name, name, sizeof(_cur_name) - 1); _cur_name[sizeof(_cur_name) - 1] = 0;
+  _cur_type = type; _cur_fav = fav; _cur_from = from;
+}
+
+void UITask::buildContacts() {                 // ulubione (wszystkie), potem najnowsze wg ostatniego advertu
+  _ct_n = 0; _ct_at = millis();
+  ContactInfo c;
+  int total = the_mesh.getNumContacts();
+  const int MAXC = (int)(sizeof(_cts) / sizeof(_cts[0]));
+  for (int i = 0; i < total; i++) {
+    if (!the_mesh.getContactByIdx(i, c) || c.type == ADV_TYPE_NONE) continue;
+    Ct e = { (uint16_t) i, c.type, (uint8_t)(c.flags & 1), c.last_advert_timestamp };
+    int pos = _ct_n;
+    while (pos > 0) {
+      Ct& p = _cts[pos - 1];
+      bool before = (e.fav && !p.fav) || (e.fav == p.fav && e.last > p.last);
+      if (!before) break;
+      pos--;
+    }
+    if (pos >= MAXC) continue;
+    int last = _ct_n < MAXC ? _ct_n : MAXC - 1;
+    for (int k = last; k > pos; k--) _cts[k] = _cts[k - 1];
+    _cts[pos] = e;
+    if (_ct_n < MAXC) _ct_n++;
+  }
+}
+
+static const char* typeTag(uint8_t t) {
+  return t == ADV_TYPE_REPEATER ? "RPT" : t == ADV_TYPE_ROOM ? "pokój" : t == ADV_TYPE_SENSOR ? "czujnik" : "";
+}
+
+void UITask::drawContacts() {
+  titleRow(_g, "< Kontakty >", NULL);
+  if (millis() - _ct_at > 15000) buildContacts();
+  int n = _ct_n + 1;
+  if (_sel >= n) _sel = n - 1;
+  for (int r = 0; r < ROWS; r++) {
+    int i = _top + r; if (i >= n) break;
+    int y = 24 + r * ROW_H;
+    char nm[32], d[16]; d[0] = 0;
+    if (i == 0) snprintf(nm, sizeof(nm), "> Usłyszane (%d)", the_mesh.ui_heard_n);
+    else {
+      ContactInfo c; Ct& e = _cts[i - 1];
+      if (!the_mesh.getContactByIdx(e.idx, c)) continue;
+      const char* tg = typeTag(c.type);
+      if (tg[0]) strcpy(d, tg); else fmtAgo(d, sizeof(d), c.last_advert_timestamp);
+      char cl[32], t[24]; cleanText(cl, sizeof(cl), c.name);
+      MapperGfx::fit(t, sizeof(t), cl, 118 - _g.textWidth(d) - (e.fav ? 6 : 0));
+      snprintf(nm, sizeof(nm), "%s%s", e.fav ? "*" : "", t);
+    }
+    if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, nm); if (d[0]) _g.textRight(125, y, d);
+    if (i == _sel) _g.color(true);
+  }
+}
+
+void UITask::drawHeard() {
+  char t[16]; snprintf(t, sizeof(t), "%d", the_mesh.ui_heard_n);
+  titleRow(_g, "Usłyszane", t);
+  int n = the_mesh.ui_heard_n;
+  if (!n) { _g.textCenter(64, 34, "nic jeszcze nie słychać"); return; }
+  if (_heard_sel >= n) _heard_sel = n - 1;
+  int top = _heard_sel >= 3 ? _heard_sel - 2 : 0;
+  for (int r = 0; r < 3; r++) {
+    int i = top + r; if (i >= n) break;
+    int y = 24 + r * ROW_H;
+    ContactInfo& c = the_mesh.ui_heard[i];
+    bool known = the_mesh.uiIsContact(c.id.pub_key);
+    char cl[32], nm[24], d[12];
+    cleanText(cl, sizeof(cl), c.name);
+    strcpy(d, known ? "jest" : "+");
+    MapperGfx::fit(nm, sizeof(nm), cl, 118 - _g.textWidth(d));
+    if (i == _heard_sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, nm); _g.textRight(125, y, d);
+    if (i == _heard_sel) _g.color(true);
+  }
+  _g.hline(0, 54, 128);
+  ContactInfo& c = the_mesh.ui_heard[_heard_sel];
+  char a[12], b[32]; fmtAgo(a, sizeof(a), the_mesh.ui_heard_at[_heard_sel]);
+  const char* tg = typeTag(c.type);
+  snprintf(b, sizeof(b), "%s%s%s  OK: dodaj", tg[0] ? tg : "osoba", " · ", a);
+  _g.text(0, 56, b);
+}
+
+// menu kontaktu: zalezy od typu (osoba / repeater / pokoj, czujnik)
+int UITask::ctMenu(uint8_t* acts) {               // 0 napisz, 1 ulubiony, 2 zarzadzaj, 3 usun
+  int n = 0;
+  if (_cur_type == ADV_TYPE_CHAT) acts[n++] = 0;
+  if (_cur_type == ADV_TYPE_REPEATER) acts[n++] = 2;
+  acts[n++] = 1; acts[n++] = 3;
+  return n;
+}
+
 void UITask::drawThread() {
   int idx[UI_MSG_MAX], n = 0;
-  for (int i = 0; i < _msg_n; i++) if (_thread_sel < _thread_n && strcmp(_msgs[i].thread, _threads[_thread_sel]) == 0) idx[n++] = i;
-  if (!n) { _screen = SCR_HOME; _page = P_MSGS; return; }
+  for (int i = 0; i < _msg_n; i++) if (strcmp(_msgs[i].thread, _cur_thread) == 0) idx[n++] = i;
+  char t[16], name[24];
+  if (!n) {
+    MapperGfx::fit(name, sizeof(name), _cur_thread, 124);
+    titleRow(_g, name, NULL);
+    _g.textCenter(64, 32, "brak wiadomości");
+    _g.hline(0, 54, 128); _g.text(0, 56, "OK: napisz");
+    return;
+  }
   if (_thread_msg < 0 || _thread_msg >= n) _thread_msg = n - 1;
   UiMsg& m = _msgs[idx[_thread_msg]];
   m.unread = false;
-  char t[16], name[24];
   fmtHM(t, sizeof(t), m.ts);
   MapperGfx::fit(name, sizeof(name), m.mine ? "Ty" : m.thread, 90);
   titleRow(_g, name, t);
@@ -1211,7 +1381,7 @@ void UITask::kbdSubmit() {
   if (_kbd_mode == 0) { if (_kbd[0]) sendText(_kbd); else popup("Pusta wiadomość"); return; }
   if (_kbd_mode == 1) {
     strncpy(_pw_typed, _kbd, sizeof(_pw_typed) - 1); _pw_typed[sizeof(_pw_typed) - 1] = 0; _pw_new = true;
-    if (_rpt_sel < _rpt_n && the_mesh.uiAdminLogin(_rpts[_rpt_sel].key, _pw_typed)) adminWait(1);
+    if (the_mesh.uiAdminLogin(_cur_key, _pw_typed)) adminWait(1);
     else { popup("Błąd wysyłki"); _screen = SCR_MENU; }
     return;
   }
@@ -1222,7 +1392,7 @@ void UITask::kbdSubmit() {
 
 void UITask::adminStartLogin(bool admin) {
   _pw_new = false;
-  const uint8_t* key = _rpts[_rpt_sel].key;
+  const uint8_t* key = _cur_key;
   if (admin) {
     char pw[24];
     if (!pwGet(key, pw)) { kbdOpen(1, SCR_MENU); return; }
@@ -1258,7 +1428,7 @@ void UITask::adminLoop() {
       else { _menu = 11; _msel[11] = 0; _screen = SCR_MENU; }
       popup("Zalogowano", a.is_admin ? "jako admin" : "jako gość");
     } else {
-      if (!_pw_new && _pw_typed[0] && _rpt_sel < _rpt_n) pwSet(_rpts[_rpt_sel].key, "");   // zapamietane haslo nie pasuje
+      if (!_pw_new && _pw_typed[0]) pwSet(_cur_key, "");   // zapamietane haslo nie pasuje
       _menu = 10; _screen = SCR_MENU;
       popup("Logowanie nieudane", _pw_typed[0] ? "złe hasło?" : "gość niedozwolony?");
     }
@@ -1322,7 +1492,7 @@ void UITask::adminLoop() {
 void UITask::drawWait() {
   static const char* const T[5] = { "", "Logowanie", "Stan", "Sąsiedzi", "Konsola" };
   char n[24];
-  if (_rpt_sel < _rpt_n) MapperGfx::fit(n, sizeof(n), _rpts[_rpt_sel].name, 124); else n[0] = 0;
+  MapperGfx::fit(n, sizeof(n), _cur_name, 124);
   titleRow(_g, n, NULL);
   _g.textCenter(64, 25, T[_wait_kind % 5]);
   _g.textCenter(64, 35, "czekam na odpowiedź...");
@@ -1364,13 +1534,14 @@ void UITask::drawSettings() {
 }
 
 void UITask::drawMenu() {
-  static const char* const T[15] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk",
-                                     "Odpowiedz", "Szybka odpowiedź", "Repeater", "Repeater", "Hasło", "Akcje", "Konsola" };
+  static const char* const T[16] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk",
+                                     "Odpowiedz", "Szybka odpowiedź", "Repeater", "Repeater", "Hasło", "Akcje", "Konsola", "Kontakt" };
   char tt[24];
   if (_menu == 8 || _menu == 9) { MapperGfx::fit(tt, sizeof(tt), _compose_to, 120); titleRow(_g, tt, NULL); }
-  else if ((_menu == 10 || _menu == 11) && _rpt_sel < _rpt_n) {
+  else if (_menu == 10 || _menu == 11 || _menu == 15) {
     const char* tag = _menu == 11 ? (the_mesh.ui_admin.is_admin ? "ADMIN" : "GOŚĆ") : NULL;
-    MapperGfx::fit(tt, sizeof(tt), _rpts[_rpt_sel].name, tag ? 84 : 124); titleRow(_g, tt, tag);
+    char cl[32]; cleanText(cl, sizeof(cl), _cur_name);
+    MapperGfx::fit(tt, sizeof(tt), cl, tag ? 84 : 124); titleRow(_g, tt, tag);
   }
   else titleRow(_g, T[_menu], NULL);
   int n = menuCount(_menu), s = _msel[_menu];

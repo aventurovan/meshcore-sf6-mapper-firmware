@@ -148,7 +148,10 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   - **pasek stanu** na każdym ekranie: godzina, kropka mappera (miga przy pingu), kłódka blokady, nieprzeczytane
     wiadomości, GPS z liczbą satelitów, Bluetooth (połączony = odwrócona ikona), bateria;
   - **ekrany** (joystick lewo/prawo): **Start** (nazwa, godzina, nowe wiadomości, stan mappera) → **Wiadomości**
-    (wątki prywatne i kanały, liczba nieprzeczytanych, odczyt z przewijaniem) → **Mapper** (stan, a joystick w dół
+    (najpierw wszystkie kanały, np. #Public, potem rozmowy prywatne; liczba nieprzeczytanych; kanał bez wiadomości też
+    można otworzyć i napisać) → **Kontakty** (ulubione z gwiazdką na górze — także ulubione repeatery — potem ostatnio
+    słyszane; przy repeaterach, pokojach i czujnikach typ zamiast czasu; OK → Napisz / Ulubiony / Zarządzaj (repeater) /
+    Usuń kontakt; pierwsza pozycja **„> Usłyszane”**: ostatnio odebrane adverty, OK dodaje urządzenie do kontaktów) → **Mapper** (stan, a joystick w dół
     pokazuje ostatnie repeatery z nazwami i SNR) → **Repeatery** (słyszane repeatery według odległości, szczegóły:
     klucz, odległość i kierunek, pozycja, ostatni advert) → **Ustawienia**;
   - **Ustawienia:** Mapper (mapowanie, ping co, dźwięk, nowa sesja), Bluetooth (wł./wył., PIN), Radio (preset SF6
@@ -160,7 +163,7 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   - **nowa wiadomość:** okienko z nadawcą i początkiem treści, dźwięk. OK otwiera wiadomość;
   - **pisanie (od 1.3.0):** w wiadomości OK → **Napisz** (klawiatura ekranowa z polskimi literami: joystick wybiera znak,
     OK wpisuje, wstecz usuwa, „Aa” wielka litera, „WYŚLIJ”), **Szybka odpowiedź** (OK, Jadę, Jestem na miejscu, Odbiór?…)
-    albo **Moja pozycja** (współrzędne i link do mapy). Na liście wiadomości pierwsza pozycja to „> Napisz na Public”;
+    albo **Moja pozycja** (współrzędne i link do mapy). Kanał otwierasz z listy Wiadomości, a pierwszą wiadomość do osoby piszesz z Kontaktów („Napisz”);
   - **wiadomości zostają po restarcie** (ostatnie 32, zapis w pamięci flash);
   - **Repeatery:** pierwsza pozycja „> Co tu słychać?” wysyła jednorazowy ping i pokazuje repeatery, które odpowiedziały,
     z SNR odbioru i nadawania. W szczegółach repeatera OK → **Ulubiony** (gwiazdka, zawsze na górze listy, ten sam znacznik

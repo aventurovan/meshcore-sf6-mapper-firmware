@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define MAPPER_PROTO_VER      4
-#define MAPPER_FW_VERSION     "1.4.0"
+#define MAPPER_FW_VERSION     "1.5.0"
 
 // aplikacja -> tracker
 #define CMD_MAP_HELLO         0xA0   // []                       -> RESP_MAP_HELLO

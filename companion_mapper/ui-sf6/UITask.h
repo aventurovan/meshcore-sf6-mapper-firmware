@@ -39,8 +39,8 @@ private:
   MapperGfx _g;
 
   // ekrany
-  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ, SCR_KBD, SCR_SCAN, SCR_WAIT };
-  enum Page { P_START, P_MSGS, P_MAPPER, P_RPT, P_SET, P_COUNT };
+  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ, SCR_KBD, SCR_SCAN, SCR_WAIT, SCR_HEARD };
+  enum Page { P_START, P_MSGS, P_CONTACTS, P_MAPPER, P_RPT, P_SET, P_COUNT };
   uint8_t _screen = SCR_SPLASH, _page = P_START;
   unsigned long _splash_at = 0;
   bool _dirty = true;
@@ -157,5 +157,22 @@ private:
   void drawWait();
   int  rptIndexByKey(const uint8_t* key);
   int  _rpt_sel = 0;
+  // biezacy watek (kanal albo rozmowa prywatna)
+  char _cur_thread[24] = ""; bool _cur_chan = true;
+  // lista na ekranie Wiadomosci: kanaly, potem rozmowy prywatne
+  char _mrow[28][24]; bool _mrow_chan[28]; int _mrow_n = 0;
+  void buildMsgRows();
+  void openThread(const char* name, bool chan);
+  // biezacy kontakt (z Kontaktow albo z Repeaterow)
+  uint8_t _cur_key[32]; char _cur_name[24] = ""; uint8_t _cur_type = 0; bool _cur_fav = false; uint8_t _cur_from = 0;
+  void setCur(const uint8_t* key, const char* name, uint8_t type, bool fav, uint8_t from);
+  // Kontakty: ulubione na gorze, potem ostatnio slyszane
+  struct Ct { uint16_t idx; uint8_t type, fav; uint32_t last; };
+  Ct _cts[120]; int _ct_n = 0; unsigned long _ct_at = 0;
+  void buildContacts();
+  void drawContacts();
+  int  _heard_sel = 0;
+  void drawHeard();
+  int  ctMenu(uint8_t* acts);
   void menuItem(int id, int i, char* label, char* value);
 };

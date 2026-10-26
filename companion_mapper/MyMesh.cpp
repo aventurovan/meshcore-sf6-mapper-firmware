@@ -351,6 +351,13 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  {                                                   // lista „Usłyszane” na ekranie (najnowsze na gorze)
+    int pos = -1;
+    for (int i = 0; i < ui_heard_n; i++) if (memcmp(ui_heard[i].id.pub_key, contact.id.pub_key, PUB_KEY_SIZE) == 0) { pos = i; break; }
+    if (pos < 0) { pos = ui_heard_n < UI_HEARD_MAX ? ui_heard_n++ : UI_HEARD_MAX - 1; }
+    for (int i = pos; i > 0; i--) { ui_heard[i] = ui_heard[i - 1]; ui_heard_at[i] = ui_heard_at[i - 1]; }
+    ui_heard[0] = contact; ui_heard_at[0] = getRTCClock()->getCurrentTime();
+  }
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact);
@@ -2288,6 +2295,21 @@ bool MyMesh::uiAdvertFlood() {
                     : createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
   if (!pkt) return false;
   sendFlood(pkt);
+  return true;
+}
+bool MyMesh::uiAddHeard(int i) {
+  if (i < 0 || i >= ui_heard_n) return false;
+  if (lookupContactByPubKey(ui_heard[i].id.pub_key, PUB_KEY_SIZE)) return true;
+  ContactInfo c = ui_heard[i];
+  c.lastmod = getRTCClock()->getCurrentTime();
+  if (!addContact(c)) return false;
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  return true;
+}
+bool MyMesh::uiRemoveContact(const uint8_t* key) {
+  ContactInfo* p = lookupContactByPubKey(key, PUB_KEY_SIZE);
+  if (!p || !removeContact(*p)) return false;
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
   return true;
 }
 bool MyMesh::uiAdminLogin(const uint8_t* key, const char* password) {
