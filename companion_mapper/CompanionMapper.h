@@ -73,6 +73,10 @@ class CompanionMapper {
   uint8_t _last_prefix[2];
   int8_t _last_snr;
   bool _sound;
+  uint32_t _scan_tag = 0;
+  unsigned long _scan_until = 0;
+  int _scan_n = 0;
+  MapResp _scan[MAP_MAX_RESP];
   MapperRecent _recent[CMAP_RECENT];
 
   bool gpsFix();
@@ -96,6 +100,11 @@ public:
   void loop();
   bool handleCmd(const uint8_t* cmd, size_t len);            // 0xA0..0xA7; true = obsluzone
   bool onControl(mesh::Packet* pkt, int8_t snr_x4, int8_t rssi);   // true = odpowiedz na nasz ping (nie do aplikacji)
+  // „Co tu slychac?”: jednorazowy ping z ekranu (niezaleznie od mapowania, bez zapisu do logu)
+  bool scanStart();
+  bool scanActive() const { return _scan_tag != 0 && (long)(millis() - _scan_until) < 0; }
+  int  scanCount() const { return _scan_n; }
+  const MapResp* scanResults() const { return _scan; }
   void notePhoneDiscover() { _phone_ping_at = millis(); }   // telefon sam mapuje — wstrzymaj pingi
   bool isRunning() const { return _run; }
   void setRunning(bool on);                                  // wlacza/wylacza tez GPS

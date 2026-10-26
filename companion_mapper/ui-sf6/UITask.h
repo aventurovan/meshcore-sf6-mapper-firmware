@@ -39,7 +39,7 @@ private:
   MapperGfx _g;
 
   // ekrany
-  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ };
+  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ, SCR_KBD, SCR_COMPASS, SCR_SCAN };
   enum Page { P_START, P_MSGS, P_MAPPER, P_RPT, P_SET, P_COUNT };
   uint8_t _screen = SCR_SPLASH, _page = P_START;
   unsigned long _splash_at = 0;
@@ -70,7 +70,7 @@ private:
   void addMsg(const char* thread, const char* text, bool chan, bool mine);
 
   // repeatery
-  struct Rpt { char name[24]; uint8_t prefix[4]; int32_t dist_m; uint32_t last; int32_t lat, lon; };
+  struct Rpt { char name[24]; uint8_t key[32]; int32_t dist_m; uint32_t last; int32_t lat, lon; bool fav; };
   Rpt _rpts[UI_RPT_MAX]; int _rpt_n = 0; unsigned long _rpt_at = 0;
   void buildRpts();
   bool rptName(const uint8_t* prefix2, char* dest, int dsz);
@@ -123,5 +123,23 @@ private:
   void drawLines();
   void drawPopup();
   int  menuCount(int id);
+  // pisanie wiadomosci (klawiatura ekranowa)
+  char _compose_to[24]; bool _compose_chan = true;
+  char _kbd[136]; int _kr = 0, _kc = 0; bool _kupper = false; uint8_t _kbd_from = 0;
+  void composeTo(const char* to, bool chan);
+  void kbdKey(char k);
+  void drawKbd();
+  bool sendText(const char* text);
+  void myPosition(char* out, int sz);
+  // wiadomosci zapisane w pamieci (zostaja po restarcie)
+  unsigned long _msg_save_at = 0;
+  void saveMsgs(); void loadMsgs();
+  // kierunek ruchu z GPS (do kompasu)
+  int32_t _hlat = 0, _hlon = 0; int _heading = -1; unsigned long _heading_at = 0, _hnext = 0;
+  void headingLoop();
+  void drawCompass();
+  void drawScan();
+  int  rptIndexByKey(const uint8_t* key);
+  int  _rpt_sel = 0;
   void menuItem(int id, int i, char* label, char* value);
 };

@@ -5,12 +5,19 @@
 #include <helpers/AdvertDataHelpers.h>
 #include "../MyMesh.h"
 #include "../CompanionMapper.h"
+#if defined(QSPIFLASH)
+  #include <CustomLFS_QSPIFlash.h>
+  #define MSG_FS QSPIFlash
+#else
+  #define MSG_FS InternalFS
+#endif
+#define MSG_FILE "/sf6msg"
 #ifdef PIN_BUZZER
   #include <helpers/ui/buzzer.h>
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.2.1"
+#define UI_VERSION       "1.3.0"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -133,6 +140,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   buzzer.quiet(_prefs->buzzer_quiet);
 #endif
   loadUiPrefs();
+  loadMsgs();
   _screen = SCR_SPLASH; _splash_at = millis(); _last_input = millis();
   if (_display) _display->turnOn();
 }
@@ -185,6 +193,7 @@ void UITask::addMsg(const char* thread, const char* text, bool chan, bool mine) 
   strncpy(m.text, text, sizeof(m.text) - 1); m.text[sizeof(m.text) - 1] = 0;
   m.chan = chan; m.unread = !mine; m.mine = mine;
   buildThreads();
+  _msg_save_at = millis() + 5000;
 }
 
 void UITask::buildThreads() {               // watki od najnowszego
@@ -227,6 +236,129 @@ void UITask::msgRead(int msgcount) {
 
 void UITask::notify(UIEventType t) { _dirty = true; }
 
+void UITask::saveMsgs() {
+  MSG_FS.remove(MSG_FILE);
+  File f = MSG_FS.open(MSG_FILE, FILE_O_WRITE);
+  if (!f) return;
+  uint8_t h[4] = { 'S', 'M', 1, (uint8_t) _msg_n };
+  f.write(h, 4);
+  f.write((const uint8_t*) _msgs, sizeof(UiMsg) * _msg_n);
+  f.close();
+}
+void UITask::loadMsgs() {
+  File f = MSG_FS.open(MSG_FILE, FILE_O_READ);
+  if (!f) return;
+  uint8_t h[4];
+  if (f.read(h, 4) == 4 && h[0] == 'S' && h[1] == 'M' && h[2] == 1 && h[3] <= UI_MSG_MAX) {
+    if (f.read((uint8_t*) _msgs, sizeof(UiMsg) * h[3]) == (int)(sizeof(UiMsg) * h[3])) _msg_n = h[3];
+  }
+  f.close();
+  buildThreads();
+}
+
+// ---------------- pisanie ----------------
+void UITask::myPosition(char* out, int sz) {
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  double la = 0, lo = 0; bool have = false, old = false;
+  if (l && l->isValid()) { la = l->getLatitude() / 1e6; lo = l->getLongitude() / 1e6; have = true; }
+  else if (sensors.node_lat != 0 || sensors.node_lon != 0) { la = sensors.node_lat; lo = sensors.node_lon; have = true; old = true; }
+  if (!have) { out[0] = 0; return; }
+  snprintf(out, sz, "Moja pozycja%s: %.5f,%.5f https://maps.google.com/?q=%.5f,%.5f", old ? " (ostatnia znana)" : "", la, lo, la, lo);
+}
+
+void UITask::composeTo(const char* to, bool chan) {
+  strncpy(_compose_to, to, sizeof(_compose_to) - 1); _compose_to[sizeof(_compose_to) - 1] = 0;
+  _compose_chan = chan;
+}
+
+bool UITask::sendText(const char* text) {
+  if (!text || !text[0]) return false;
+  bool ok;
+  if (_compose_chan) { int idx = the_mesh.uiChannelIndex(_compose_to); ok = idx >= 0 && the_mesh.uiSendChannelText(idx, text); }
+  else ok = the_mesh.uiSendDirectText(_compose_to, text);
+  if (ok) {
+    addMsg(_compose_to, text, _compose_chan, true);
+    for (int t = 0; t < _thread_n; t++) if (strcmp(_threads[t], _compose_to) == 0) { _thread_sel = t; break; }
+    _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+    popup("Wysłano", _compose_to);
+  } else popup("Błąd wysyłki", _compose_chan ? "brak kanału" : "brak kontaktu");
+  return ok;
+}
+
+// klawiatura: 4 rzedy po 13 znakow + rzad klawiszy (Aa, spacja, usun, WYSLIJ)
+static const char* const KB[4][13] = {
+  { "a", "ą", "b", "c", "ć", "d", "e", "ę", "f", "g", "h", "i", "j" },
+  { "k", "l", "ł", "m", "n", "ń", "o", "ó", "p", "r", "s", "ś", "t" },
+  { "u", "w", "y", "z", "ź", "ż", "q", "v", "x", ".", ",", "?", "!" },
+  { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", ":", "/" } };
+static const char* const KB_UP[] = { "ą", "Ą", "ć", "Ć", "ę", "Ę", "ł", "Ł", "ń", "Ń", "ó", "Ó", "ś", "Ś", "ź", "Ź", "ż", "Ż" };
+static const char* kbUpper(const char* k) {
+  static char b[4];
+  if (k[1] == 0) { b[0] = (k[0] >= 'a' && k[0] <= 'z') ? k[0] - 32 : k[0]; b[1] = 0; return b; }
+  for (int i = 0; i < 18; i += 2) if (strcmp(KB_UP[i], k) == 0) return KB_UP[i + 1];
+  return k;
+}
+
+void UITask::kbdKey(char k) {
+  int len = strlen(_kbd);
+  if (k == 'U') { if (_kr == 4) _kc = _kc * 13 / 4 + 1; _kr = (_kr + 4) % 5; if (_kr == 4) _kc = _kc * 4 / 13; return; }
+  if (k == 'D') { if (_kr == 4) _kc = _kc * 13 / 4 + 1; _kr = (_kr + 1) % 5; if (_kr == 4) _kc = _kc * 4 / 13; if (_kc > 12) _kc = 12; return; }
+  int cols = _kr == 4 ? 4 : 13;
+  if (k == 'L') { _kc = (_kc + cols - 1) % cols; return; }
+  if (k == 'R') { _kc = (_kc + 1) % cols; return; }
+  if (k == 'B') {                                  // usun znak (UTF-8); pusty tekst = wyjscie
+    if (!len) { _screen = _kbd_from; return; }
+    int i = len - 1; while (i > 0 && ((uint8_t)_kbd[i] & 0xC0) == 0x80) i--;
+    _kbd[i] = 0; return;
+  }
+  if (k != 'O') return;
+  if (_kr == 4) {
+    if (_kc == 0) _kupper = !_kupper;
+    else if (_kc == 1) { if (len < 130) { _kbd[len] = ' '; _kbd[len + 1] = 0; } }
+    else if (_kc == 2) kbdKey('B');
+    else if (_kc == 3) { if (len) sendText(_kbd); else popup("Pusta wiadomość"); }
+    return;
+  }
+  const char* c = KB[_kr][_kc];
+  if (_kupper) { c = kbUpper(c); _kupper = false; }
+  int cl = strlen(c);
+  if (len + cl < 131) { memcpy(_kbd + len, c, cl + 1); }
+}
+
+void UITask::drawKbd() {
+  char b[32], to[20];
+  MapperGfx::fit(to, sizeof(to), _compose_to, 84);
+  snprintf(b, sizeof(b), "Do: %s", to);
+  _g.text(0, 0, b);
+  snprintf(b, sizeof(b), "%d", (int) strlen(_kbd));
+  _g.textRight(127, 0, b);
+  _g.hline(0, 9, 128);
+  // koniec tekstu (ostatnie 20 znakow) + kursor
+  const char* p = _kbd; int n = 0; { const char* q = _kbd; while (*q) { mapperUtf8Next(q); n++; } }
+  int skip = n > 20 ? n - 20 : 0;
+  while (skip-- > 0) mapperUtf8Next(p);
+  int w = _g.text(0, 11, p);
+  if ((millis() / 400) % 2) _g.rect(w + 1, 18, 5, 1);
+  _g.hline(0, 20, 128);
+  for (int r = 0; r < 4; r++) for (int c = 0; c < 13; c++) {
+    int x = 1 + c * 10 - (c > 0 ? 0 : 0), y = 22 + r * 8;
+    const char* t = _kupper ? kbUpper(KB[r][c]) : KB[r][c];
+    char tc[4]; strncpy(tc, t, 3); tc[3] = 0;
+    if (r == _kr && c == _kc) { _g.rect(x, y - 1, 8, 9); _g.color(false); _g.text(x + 1, y, tc); _g.color(true); }
+    else _g.text(x + 1, y, tc);
+  }
+  _g.hline(0, 54, 128);
+  static const char* const BK[4] = { "Aa", "spacja", "usuń", "WYŚLIJ" };
+  static const int BX[4] = { 0, 16, 56, 88 };
+  for (int i = 0; i < 4; i++) {
+    int wv = _g.textWidth(BK[i]) + 2;
+    bool sel = _kr == 4 && _kc == i;
+    bool up = i == 0 && _kupper;
+    if (sel || up) { _g.rect(BX[i], 55, wv, 9); _g.color(false); _g.text(BX[i] + 1, 56, BK[i]); _g.color(true); }
+    else _g.text(BX[i] + 1, 56, BK[i]);
+  }
+}
+
 // ---------------- repeatery ----------------
 void UITask::buildRpts() {
   _rpt_n = 0; _rpt_at = millis();
@@ -239,14 +371,16 @@ void UITask::buildRpts() {
     if (!the_mesh.getContactByIdx(i, c) || c.type != ADV_TYPE_REPEATER) continue;
     Rpt r;
     strncpy(r.name, c.name, sizeof(r.name) - 1); r.name[sizeof(r.name) - 1] = 0;
-    memcpy(r.prefix, c.id.pub_key, 4);
+    memcpy(r.key, c.id.pub_key, 32);
+    r.fav = (c.flags & 0x01) != 0;
     r.last = c.last_advert_timestamp; r.lat = c.gps_lat; r.lon = c.gps_lon;
     r.dist_m = (have && (c.gps_lat || c.gps_lon)) ? (int32_t) distM(mla, mlo, c.gps_lat / 1e6, c.gps_lon / 1e6) : -1;
     // wstawianie: najpierw po odleglosci, bez pozycji na koncu (po czasie)
     int pos = _rpt_n;
     while (pos > 0) {
       Rpt& p = _rpts[pos - 1];
-      bool before = (r.dist_m >= 0 && (p.dist_m < 0 || r.dist_m < p.dist_m)) || (r.dist_m < 0 && p.dist_m < 0 && r.last > p.last);
+      bool before = (r.fav && !p.fav) || (r.fav == p.fav &&
+        ((r.dist_m >= 0 && (p.dist_m < 0 || r.dist_m < p.dist_m)) || (r.dist_m < 0 && p.dist_m < 0 && r.last > p.last)));
       if (!before) break;
       pos--;
     }
@@ -258,6 +392,11 @@ void UITask::buildRpts() {
   }
 }
 
+int UITask::rptIndexByKey(const uint8_t* key) {
+  for (int i = 0; i < _rpt_n; i++) if (memcmp(_rpts[i].key, key, 32) == 0) return i;
+  return -1;
+}
+
 bool UITask::rptName(const uint8_t* p2, char* dest, int dsz) {
   ContactInfo c;
   int total = the_mesh.getNumContacts();
@@ -267,6 +406,20 @@ bool UITask::rptName(const uint8_t* p2, char* dest, int dsz) {
   }
   snprintf(dest, dsz, "#%02X%02X", p2[0], p2[1]);
   return false;
+}
+
+// kierunek ruchu z kolejnych pozycji GPS (Wio nie ma magnetometru): przesuniecie >= 15 m
+void UITask::headingLoop() {
+  unsigned long now = millis();
+  if ((long)(now - _hnext) < 0) return;
+  _hnext = now + 2000;
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  if (!l || !l->isValid()) return;
+  int32_t la = l->getLatitude(), lo = l->getLongitude();
+  if (!_hlat && !_hlon) { _hlat = la; _hlon = lo; return; }
+  double d = distM(_hlat / 1e6, _hlon / 1e6, la / 1e6, lo / 1e6);
+  if (d >= 15) { _heading = bearing(_hlat / 1e6, _hlon / 1e6, la / 1e6, lo / 1e6); _heading_at = now; _hlat = la; _hlon = lo; }
+  else if (now - _heading_at > 30000UL && d < 5) { _hlat = la; _hlon = lo; }
 }
 
 // ---------------- akcje ----------------
@@ -366,6 +519,8 @@ void UITask::loop() {
     return;
   }
 
+  headingLoop();
+  if (_msg_save_at && (long)(now - _msg_save_at) >= 0) { _msg_save_at = 0; saveMsgs(); }
   okLoop();
   char k = 0;
   if (joystick_left.check() == BUTTON_EVENT_CLICK) k = 'L';
@@ -402,6 +557,7 @@ void UITask::loop() {
 
 // ---------------- klawisze ----------------
 void UITask::key(char k) {
+  if (k == 'H' && _screen == SCR_KBD) { _screen = _kbd_from; return; }
   if (k == 'H') { _screen = SCR_HOME; _page = P_START; _sel = 0; _top = 0; _mapper_list = false; return; }
   if (_pop_msg && _pop_until > millis() && k == 'O') {       // OK na okienku nowej wiadomosci: otworz watek
     _pop_until = 0; _pop_msg = false;
@@ -421,15 +577,28 @@ void UITask::key(char k) {
       if (k == 'D') { if (_thread_line + 4 < nl) _thread_line++; else if (_thread_msg < n - 1) { _thread_msg++; _thread_line = 0; } }
       else if (k == 'U') { if (_thread_line > 0) _thread_line--; else if (_thread_msg > 0) { _thread_msg--; _thread_line = 0; } }
       else if (k == 'B' || k == 'L') { _screen = SCR_HOME; _page = P_MSGS; }
+      else if (k == 'O' && n) {                   // odpowiedz: napisz / szybka odpowiedz / moja pozycja
+        composeTo(_msgs[idx[_thread_msg]].thread, _msgs[idx[_thread_msg]].chan);
+        openMenu(8);
+      }
       break;
     }
+    case SCR_KBD: kbdKey(k); break;
+    case SCR_COMPASS:
+      if (k == 'B' || k == 'L' || k == 'O') _screen = SCR_RPT;
+      break;
+    case SCR_SCAN:
+      if (k == 'O') { if (!mapper.scanActive()) mapper.scanStart(); }
+      else if (k == 'B' || k == 'L') _screen = SCR_HOME;
+      break;
     case SCR_LINES:
       if (k == 'D' && _lines_top + 4 < _nlines) _lines_top++;
       else if (k == 'U' && _lines_top > 0) _lines_top--;
       else if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
       break;
     case SCR_RPT:
-      if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
+      if (k == 'O') openMenu(10);
+      else if (k == 'B' || k == 'L') { _screen = SCR_HOME; }
       break;
     case SCR_FREQ:
       if (k == 'U' || k == 'D') { int d = _fdig[_fcur] - '0'; d = (d + (k == 'U' ? 1 : 9)) % 10; _fdig[_fcur] = '0' + d; }
@@ -453,7 +622,7 @@ void UITask::homeKey(char k) {
     return;
   }
   if (k == 'B') { if (_page != P_START) { _page = P_START; _sel = 0; _top = 0; } return; }
-  int count = _page == P_MSGS ? _thread_n : _page == P_RPT ? _rpt_n : _page == P_SET ? menuCount(0) : 0;
+  int count = _page == P_MSGS ? _thread_n + 1 : _page == P_RPT ? _rpt_n + 1 : _page == P_SET ? menuCount(0) : 0;
   if (_page == P_MAPPER && (k == 'U' || k == 'D')) { _mapper_list = (k == 'D'); return; }
   if ((k == 'U' || k == 'D') && count > 0) {
     _sel = (_sel + (k == 'D' ? 1 : count - 1)) % count;
@@ -471,10 +640,16 @@ void UITask::homeKey(char k) {
       } else { _page = P_MSGS; buildThreads(); }
       break;
     case P_MSGS:
-      if (_thread_n) { _thread_sel = _sel; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD; }
+      if (_sel == 0) {                              // „Napisz na Public”
+        int idx = the_mesh.uiChannelIndex("Public");
+        ChannelDetails cd;
+        if (idx < 0 && the_mesh.getChannel(0, cd)) composeTo(cd.name, true); else composeTo("Public", true);
+        _kbd[0] = 0; _kr = 0; _kc = 0; _kupper = true; _kbd_from = SCR_HOME; _screen = SCR_KBD;
+      } else if (_sel - 1 < _thread_n) { _thread_sel = _sel - 1; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD; }
       break;
     case P_RPT:
-      if (_rpt_n) _screen = SCR_RPT;
+      if (_sel == 0) { mapper.scanStart(); _screen = SCR_SCAN; }
+      else if (_sel - 1 < _rpt_n) { _rpt_sel = _sel - 1; _screen = SCR_RPT; }
       break;
     case P_SET:
       _menu = 0; menuAction(+1);
@@ -485,11 +660,12 @@ void UITask::homeKey(char k) {
 // ---------------- menu ustawien ----------------
 // 0 = glowne (strona Ustawienia), 1 Mapper, 2 Bluetooth, 3 Radio, 4 GPS, 5 Advert, 6 Ekran, 7 Dzwiek
 static const uint8_t TXP[] = { 2, 5, 8, 11, 14, 17, 20, 22 };
+static const char* const QUICK[8] = { "OK", "Jadę", "Jestem na miejscu", "Odbiór?", "Słyszę Cię dobrze", "Za 10 minut", "Dzięki!", "Zadzwoń do mnie" };
 static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
 
 int UITask::menuCount(int id) {
-  static const uint8_t C[8] = { 10, 4, 3, 4, 3, 2, 3, 2 };
-  return id >= 0 && id < 8 ? C[id] : 0;
+  static const uint8_t C[11] = { 10, 4, 3, 7, 3, 2, 3, 2, 3, 8, 2 };
+  return id >= 0 && id < 11 ? C[id] : 0;
 }
 
 void UITask::menuItem(int id, int i, char* L, char* V) {
@@ -558,6 +734,18 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
       if (i == 2) strcpy(V, _wake_msg ? "WŁ" : "WYŁ");
       break;
     }
+    case 8: {
+      static const char* const N[3] = { "Napisz", "Szybka odpowiedź", "Moja pozycja" };
+      strcpy(L, N[i]);
+      break;
+    }
+    case 9: strcpy(L, QUICK[i]); break;
+    case 10: {
+      static const char* const N[2] = { "Ulubiony", "Kompas" };
+      strcpy(L, N[i]);
+      if (i == 0 && _rpt_sel < _rpt_n) strcpy(V, _rpts[_rpt_sel].fav ? "TAK" : "NIE");
+      break;
+    }
     case 7: {
       static const char* const N[2] = { "Wiadomości", "Mapper (RPT)" };
       strcpy(L, N[i]);
@@ -581,7 +769,11 @@ bool UITask::radioChanged() {
 void UITask::menuKey(char k) {
   int n = menuCount(_menu), &s = _msel[_menu];
   if (k == 'U' || k == 'D') { s = (s + (k == 'D' ? 1 : n - 1)) % n; _armed_item = -1; return; }
-  if (k == 'B') { _screen = SCR_HOME; _page = P_SET; return; }
+  if (k == 'B' || (k == 'L' && _menu >= 8)) {
+    if (_menu == 8 || _menu == 9) { _screen = SCR_THREAD; return; }
+    if (_menu == 10) { _screen = SCR_RPT; return; }
+    _screen = SCR_HOME; _page = P_SET; return;
+  }
   bool cycle = (_menu == 1 && s == 1) || (_menu == 3 && (s == 1 || (s >= 3 && s <= 5))) || (_menu == 6 && s == 0);
   if (k == 'L') { if (cycle) menuAction(-1); else { _screen = SCR_HOME; _page = P_SET; } return; }
   if (k == 'O' || k == 'R') menuAction(+1);
@@ -674,6 +866,25 @@ void UITask::menuAction(int dir) {
       if (i == 2) _wake_msg = !_wake_msg;
       saveUiPrefs();
       return;
+    case 8:
+      if (i == 0) { _kbd[0] = 0; _kr = 0; _kc = 0; _kupper = true; _kbd_from = SCR_THREAD; _screen = SCR_KBD; }
+      if (i == 1) openMenu(9);
+      if (i == 2) { char b[140]; myPosition(b, sizeof(b)); if (b[0]) sendText(b); else popup("Brak pozycji GPS"); }
+      return;
+    case 9:
+      sendText(QUICK[i]);
+      return;
+    case 10:
+      if (_rpt_sel >= _rpt_n) return;
+      if (i == 0) {
+        uint8_t key[32]; memcpy(key, _rpts[_rpt_sel].key, 32);
+        int r = the_mesh.uiToggleFavourite(key);
+        buildRpts();
+        int ni = rptIndexByKey(key); if (ni >= 0) _rpt_sel = ni;
+        popup(r == 1 ? "Ulubiony" : r == 0 ? "Usunięto z ulubionych" : "Brak kontaktu", r == 1 ? "zawsze na górze listy" : NULL);
+      }
+      if (i == 1) _screen = SCR_COMPASS;
+      return;
     case 7:
       if (i == 0) {
         _prefs->buzzer_quiet = _prefs->buzzer_quiet ? 0 : 1; the_mesh.savePrefs();
@@ -692,6 +903,7 @@ void UITask::render() {
   _display->startFrame();
   _g.color(true);
   if (_screen == SCR_SPLASH) { drawSplash(millis() - _splash_at); _display->endFrame(); return; }
+  if (_screen == SCR_KBD) { drawKbd(); if (_pop_until > millis()) drawPopup(); _display->endFrame(); return; }
   statusBar();
   switch (_screen) {
     case SCR_HOME:
@@ -708,6 +920,9 @@ void UITask::render() {
     case SCR_LINES: drawLines(); break;
     case SCR_RPT: drawRptDetail(); break;
     case SCR_FREQ: drawFreq(); break;
+    case SCR_KBD: break;
+    case SCR_COMPASS: drawCompass(); break;
+    case SCR_SCAN: drawScan(); break;
   }
   if (_pop_until > millis()) drawPopup();
   _display->endFrame();
@@ -776,15 +991,16 @@ void UITask::drawStart() {
 
 void UITask::drawMsgs() {
   titleRow(_g, "< Wiadomości >", NULL);
-  if (!_thread_n) { _g.textCenter(64, 34, "brak wiadomości"); return; }
-  if (_sel >= _thread_n) _sel = _thread_n - 1;
+  int n = _thread_n + 1;
+  if (_sel >= n) _sel = n - 1;
   for (int r = 0; r < ROWS; r++) {
-    int i = _top + r; if (i >= _thread_n) break;
+    int i = _top + r; if (i >= n) break;
     int y = 24 + r * ROW_H;
-    char n[24], c[8]; MapperGfx::fit(n, sizeof(n), _threads[i], 100);
-    int u = unreadCount(_threads[i]); c[0] = 0; if (u) snprintf(c, sizeof(c), "%d", u);
+    char nm[24], c[8]; c[0] = 0;
+    if (i == 0) strcpy(nm, "» Napisz na Public");
+    else { MapperGfx::fit(nm, sizeof(nm), _threads[i - 1], 100); int u = unreadCount(_threads[i - 1]); if (u) snprintf(c, sizeof(c), "%d", u); }
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
-    _g.text(2, y, n); if (c[0]) _g.textRight(125, y, c);
+    _g.text(2, y, nm); if (c[0]) _g.textRight(125, y, c);
     if (i == _sel) _g.color(true);
   }
 }
@@ -805,7 +1021,7 @@ void UITask::drawThread() {
   for (int r = 0; r < 3 && _thread_line + r < nl; r++) _g.text(0, 24 + r * 10, lines[_thread_line + r]);
   char f[24]; snprintf(f, sizeof(f), "%d/%d", _thread_msg + 1, n);
   _g.hline(0, 54, 128);
-  _g.text(0, 56, nl > _thread_line + 3 ? "w dół: dalej" : "góra/dół: inne");
+  _g.text(0, 56, nl > _thread_line + 3 ? "w dół: dalej" : "OK: odpowiedz");
   _g.textRight(127, 56, f);
 }
 
@@ -844,27 +1060,32 @@ void UITask::drawMapper() {
 void UITask::drawRpts() {
   titleRow(_g, "< Repeatery >", NULL);
   if (millis() - _rpt_at > 10000) buildRpts();
-  if (!_rpt_n) { _g.textCenter(64, 34, "brak repeaterów"); return; }
-  if (_sel >= _rpt_n) _sel = _rpt_n - 1;
+  int n = _rpt_n + 1;
+  if (_sel >= n) _sel = n - 1;
   for (int r = 0; r < ROWS; r++) {
-    int i = _top + r; if (i >= _rpt_n) break;
+    int i = _top + r; if (i >= n) break;
     int y = 24 + r * ROW_H;
-    char n[24], d[16];
-    if (_rpts[i].dist_m >= 0) fmtDist(d, sizeof(d), _rpts[i].dist_m); else fmtAgo(d, sizeof(d), _rpts[i].last);
-    MapperGfx::fit(n, sizeof(n), _rpts[i].name, 124 - _g.textWidth(d) - 6);
+    char nm[28], d[16]; d[0] = 0;
+    if (i == 0) strcpy(nm, "» Co tu słychać?");
+    else {
+      Rpt& rp = _rpts[i - 1];
+      if (rp.dist_m >= 0) fmtDist(d, sizeof(d), rp.dist_m); else fmtAgo(d, sizeof(d), rp.last);
+      char t[24]; MapperGfx::fit(t, sizeof(t), rp.name, 118 - _g.textWidth(d) - (rp.fav ? 6 : 0));
+      snprintf(nm, sizeof(nm), "%s%s", rp.fav ? "*" : "", t);
+    }
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
-    _g.text(2, y, n); _g.textRight(125, y, d);
+    _g.text(2, y, nm); if (d[0]) _g.textRight(125, y, d);
     if (i == _sel) _g.color(true);
   }
 }
 
 void UITask::drawRptDetail() {
-  if (_sel >= _rpt_n) { _screen = SCR_HOME; return; }
-  Rpt& r = _rpts[_sel];
+  if (_rpt_sel >= _rpt_n) { _screen = SCR_HOME; return; }
+  Rpt& r = _rpts[_rpt_sel];
   char b[32], n[24];
   MapperGfx::fit(n, sizeof(n), r.name, 124);
   titleRow(_g, n, NULL);
-  snprintf(b, sizeof(b), "klucz %02X%02X%02X%02X", r.prefix[0], r.prefix[1], r.prefix[2], r.prefix[3]);
+  snprintf(b, sizeof(b), "klucz %02X%02X%02X%02X%s", r.key[0], r.key[1], r.key[2], r.key[3], r.fav ? "  *ulub." : "");
   _g.text(0, 24, b);
   LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
   if (r.lat || r.lon) {
@@ -880,7 +1101,57 @@ void UITask::drawRptDetail() {
   char a[16]; fmtAgo(a, sizeof(a), r.last);
   snprintf(b, sizeof(b), "advert: %s", a);
   _g.text(0, 54, b);
+  _g.textRight(127, 54, "OK »");
 }
+
+// kompas: strzalka do repeatera wzgledem kierunku jazdy (albo polnocy, gdy stoimy)
+void UITask::drawCompass() {
+  if (_rpt_sel >= _rpt_n) { _screen = SCR_HOME; return; }
+  Rpt& r = _rpts[_rpt_sel];
+  char b[32], n[24];
+  MapperGfx::fit(n, sizeof(n), r.name, 124);
+  titleRow(_g, n, NULL);
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  if (!(r.lat || r.lon)) { _g.textCenter(64, 36, "repeater bez pozycji"); return; }
+  if (!l || !l->isValid()) { _g.textCenter(64, 36, "czekam na GPS"); return; }
+  double la = l->getLatitude() / 1e6, lo = l->getLongitude() / 1e6;
+  int br = bearing(la, lo, r.lat / 1e6, r.lon / 1e6);
+  int32_t dm = (int32_t) distM(la, lo, r.lat / 1e6, r.lon / 1e6);
+  bool moving = _heading >= 0 && millis() - _heading_at < 20000UL;
+  int rel = moving ? (br - _heading + 360) % 360 : br;
+  fmtDist(b, sizeof(b), dm); _g.text(0, 25, b, 2);
+  snprintf(b, sizeof(b), "%s %d°", compass(br), br); _g.text(0, 43, b);
+  _g.text(0, 54, moving ? "góra = przód" : "góra = północ");
+  const int cx = 106, cy = 39, R = 15;               // tarcza
+  for (int a2 = 0; a2 < 360; a2 += 15) _g.rect(cx + (int)(R * sin(a2 * DEG_TO_RAD)), cy - (int)(R * cos(a2 * DEG_TO_RAD)), 1, 1);
+  double ar = rel * DEG_TO_RAD;
+  int tx = cx + (int)((R - 2) * sin(ar)), ty = cy - (int)((R - 2) * cos(ar));
+  int bx = cx - (int)(6 * sin(ar)), by = cy + (int)(6 * cos(ar));
+  for (int k = 0; k <= 16; k++) { int x = bx + (tx - bx) * k / 16, y = by + (ty - by) * k / 16; _g.rect(x - 1, y - 1, 2, 2); }
+  double al = ar + 2.6, arr = ar - 2.6;               // grot
+  for (int k = 0; k <= 5; k++) {
+    _g.rect(tx + (int)(k * sin(al)), ty - (int)(k * cos(al)), 2, 2);
+    _g.rect(tx + (int)(k * sin(arr)), ty - (int)(k * cos(arr)), 2, 2);
+  }
+}
+
+// „Co tu slychac?”: wynik pingu z ekranu (repeatery, ktore odpowiedzialy, SNR odbior/nadawanie)
+void UITask::drawScan() {
+  bool act = mapper.scanActive();
+  titleRow(_g, "Co tu słychać?", act ? "..." : "");
+  int n = mapper.scanCount();
+  const MapResp* r = mapper.scanResults();
+  if (!n) { _g.textCenter(64, 32, act ? "nasłuchuję..." : "nikt nie odpowiedział"); if (!act) _g.textCenter(64, 44, "OK: ponów"); return; }
+  for (int i = 0; i < n && i < 4; i++) {
+    int y = 24 + i * ROW_H;
+    char nm[24], nf[20], a[10], c[10], v[22];
+    rptName(r[i].prefix, nm, sizeof(nm)); MapperGfx::fit(nf, sizeof(nf), nm, 70);
+    fmtSnr(a, sizeof(a), r[i].snr_rx); fmtSnr(c, sizeof(c), r[i].snr_tx);
+    snprintf(v, sizeof(v), "%s/%s", a, c);
+    _g.text(0, y, nf); _g.textRight(127, y, v);
+  }
+}
+
 
 void UITask::drawSettings() {
   titleRow(_g, "< Ustawienia >", NULL);
@@ -897,8 +1168,12 @@ void UITask::drawSettings() {
 }
 
 void UITask::drawMenu() {
-  static const char* const T[8] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk" };
-  titleRow(_g, T[_menu], NULL);
+  static const char* const T[11] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk",
+                                     "Odpowiedz", "Szybka odpowiedź", "Repeater" };
+  char tt[24];
+  if (_menu == 8 || _menu == 9) { MapperGfx::fit(tt, sizeof(tt), _compose_to, 120); titleRow(_g, tt, NULL); }
+  else if (_menu == 10 && _rpt_sel < _rpt_n) { MapperGfx::fit(tt, sizeof(tt), _rpts[_rpt_sel].name, 120); titleRow(_g, tt, NULL); }
+  else titleRow(_g, T[_menu], NULL);
   int n = menuCount(_menu), s = _msel[_menu];
   int top = s >= ROWS ? s - ROWS + 1 : 0;
   for (int r = 0; r < ROWS; r++) {

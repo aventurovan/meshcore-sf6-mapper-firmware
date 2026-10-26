@@ -2262,6 +2262,32 @@ bool MyMesh::uiAdvertFlood() {
   sendFlood(pkt);
   return true;
 }
+bool MyMesh::uiSendDirectText(const char* contact_name, const char* text) {
+  ContactInfo c;
+  for (int i = 0; i < getNumContacts(); i++) {
+    if (!getContactByIdx(i, c) || strcmp(c.name, contact_name) != 0) continue;
+    ContactInfo* p = lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
+    if (!p) return false;
+    uint32_t ack, timeout;
+    return sendMessage(*p, getRTCClock()->getCurrentTimeUnique(), 0, text, ack, timeout) != MSG_SEND_FAILED;
+  }
+  return false;
+}
+int MyMesh::uiToggleFavourite(const uint8_t* pub_key) {
+  ContactInfo* p = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (!p) return -1;
+  p->flags ^= 0x01;                                  // bit 0 = ulubiony (jak w aplikacji MeshCore)
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  return (p->flags & 0x01) ? 1 : 0;
+}
+int MyMesh::uiChannelIndex(const char* name) {
+  ChannelDetails cd;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (!getChannel(i, cd)) break;
+    if (cd.name[0] && strcmp(cd.name, name) == 0) return i;
+  }
+  return -1;
+}
 bool MyMesh::uiSendChannelText(int channel_idx, const char* text) {
   ChannelDetails cd;
   if (!getChannel(channel_idx, cd)) return false;

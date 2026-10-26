@@ -118,6 +118,9 @@ public:
   int  uiMaxTxPower() const { return MAX_LORA_TX_POWER; }
   bool uiAdvertFlood();
   bool uiSendChannelText(int channel_idx, const char* text);
+  bool uiSendDirectText(const char* contact_name, const char* text);     // wiadomosc prywatna (kontakt po nazwie)
+  int  uiToggleFavourite(const uint8_t* pub_key);                         // 1 = ulubiony, 0 = nie, -1 = brak kontaktu
+  int  uiChannelIndex(const char* name);
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

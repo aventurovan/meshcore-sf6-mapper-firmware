@@ -154,10 +154,37 @@ void CompanionMapper::startPing() {
   _next_ping = _last_ping + (unsigned long) _interval * 1000UL;
 }
 
+bool CompanionMapper::scanStart() {
+  if (!_host) return false;
+  uint8_t d[10];
+  d[0] = 0x80 | 0x01;                               // DISCOVER_REQ, prefix_only
+  d[1] = (1 << ADV_TYPE_REPEATER);
+  _host->mpRandom(&d[2], 4);
+  memset(&d[6], 0, 4);
+  uint32_t tag; memcpy(&tag, &d[2], 4);
+  if (tag == 0) tag = 1, memcpy(&d[2], &tag, 4);
+  _scan_n = 0;
+  if (!_host->mpSendDiscover(d, sizeof(d))) { _scan_tag = 0; return false; }
+  _scan_tag = tag; _scan_until = millis() + 10000UL;
+  return true;
+}
+
 bool CompanionMapper::onControl(mesh::Packet* pkt, int8_t snr_x4, int8_t rssi) {
-  if (!_collecting || _tag == 0 || pkt->payload_len < 6 + MAP_PREFIX_LEN) return false;
+  if (pkt->payload_len < 6 + MAP_PREFIX_LEN) return false;
   if ((pkt->payload[0] & 0xF0) != 0x90) return false;
   uint32_t tag; memcpy(&tag, &pkt->payload[2], 4);
+  if (_scan_tag && tag == _scan_tag) {              // odpowiedz na „Co tu slychac?”
+    if ((pkt->payload[0] & 0x0F) != ADV_TYPE_REPEATER) return true;
+    const uint8_t* key = &pkt->payload[6];
+    for (int i = 0; i < _scan_n; i++) if (memcmp(_scan[i].prefix, key, MAP_PREFIX_LEN) == 0) return true;
+    if (_scan_n >= MAP_MAX_RESP) return true;
+    MapResp& r = _scan[_scan_n++];
+    memcpy(r.prefix, key, MAP_PREFIX_LEN);
+    r.snr_rx = snr_x4; r.snr_tx = (int8_t) pkt->payload[1]; r.rssi = rssi;
+    for (int i = _scan_n - 1; i > 0 && _scan[i].snr_rx > _scan[i - 1].snr_rx; i--) { MapResp t = _scan[i]; _scan[i] = _scan[i - 1]; _scan[i - 1] = t; }
+    return true;
+  }
+  if (!_collecting || _tag == 0) return false;
   if (tag != _tag) return false;                    // to nie nasz ping — odpowiedz idzie do aplikacji
   if ((pkt->payload[0] & 0x0F) != ADV_TYPE_REPEATER) return true;
   const uint8_t* key = &pkt->payload[6];

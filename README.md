@@ -158,6 +158,14 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
     Informacje (przewijane góra/dół), Restart, Wyłącz;
   - **emotki w nazwach** (urządzenia, repeaterów, wątków) są pomijane — ekran pokazuje tylko litery, cyfry i znaki;
   - **nowa wiadomość:** okienko z nadawcą i początkiem treści, dźwięk. OK otwiera wiadomość;
+  - **pisanie (od 1.3.0):** w wiadomości OK → **Napisz** (klawiatura ekranowa z polskimi literami: joystick wybiera znak,
+    OK wpisuje, wstecz usuwa, „Aa” wielka litera, „WYŚLIJ”), **Szybka odpowiedź** (OK, Jadę, Jestem na miejscu, Odbiór?…)
+    albo **Moja pozycja** (współrzędne i link do mapy). Na liście wiadomości pierwsza pozycja to „» Napisz na Public”;
+  - **wiadomości zostają po restarcie** (ostatnie 32, zapis w pamięci flash);
+  - **Repeatery:** pierwsza pozycja „» Co tu słychać?” wysyła jednorazowy ping i pokazuje repeatery, które odpowiedziały,
+    z SNR odbioru i nadawania. W szczegółach repeatera OK → **Ulubiony** (gwiazdka, zawsze na górze listy, ten sam znacznik
+    co w aplikacji MeshCore; ulubione nie są usuwane przy pełnej liście kontaktów) i **Kompas** (strzałka do repeatera;
+    w ruchu góra = kierunek jazdy, na postoju góra = północ, plus odległość i kierunek);
   - **sterowanie:** góra/dół przewija listy, OK wybiera, wstecz cofa, przytrzymanie wstecz wraca na Start.
 - **Skróty przycisku OK (Wio):**
 
