@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.5.0"
+#define UI_VERSION       "1.5.1"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -378,8 +378,8 @@ void UITask::buildRpts() {
   bool have = l && l->isValid();
   double mla = have ? l->getLatitude() / 1e6 : 0, mlo = have ? l->getLongitude() / 1e6 : 0;
   ContactInfo c;
-  int total = the_mesh.getNumContacts();
-  for (int i = 0; i < total; i++) {
+  int total = the_mesh.getTotalContactSlots();   // indeksy z pierwszymi 8 miejscami „anon”
+  for (int i = MAX_ANON_CONTACTS; i < total; i++) {
     if (!the_mesh.getContactByIdx(i, c) || c.type != ADV_TYPE_REPEATER) continue;
     Rpt r;
     strncpy(r.name, c.name, sizeof(r.name) - 1); r.name[sizeof(r.name) - 1] = 0;
@@ -411,8 +411,8 @@ int UITask::rptIndexByKey(const uint8_t* key) {
 
 bool UITask::rptName(const uint8_t* p2, char* dest, int dsz) {
   ContactInfo c;
-  int total = the_mesh.getNumContacts();
-  for (int i = 0; i < total; i++) {
+  int total = the_mesh.getTotalContactSlots();   // indeksy z pierwszymi 8 miejscami „anon”
+  for (int i = MAX_ANON_CONTACTS; i < total; i++) {
     if (!the_mesh.getContactByIdx(i, c) || c.type != ADV_TYPE_REPEATER) continue;
     if (c.id.pub_key[0] == p2[0] && c.id.pub_key[1] == p2[1]) { strncpy(dest, c.name, dsz - 1); dest[dsz - 1] = 0; return true; }
   }
@@ -1146,9 +1146,9 @@ void UITask::setCur(const uint8_t* key, const char* name, uint8_t type, bool fav
 void UITask::buildContacts() {                 // ulubione (wszystkie), potem najnowsze wg ostatniego advertu
   _ct_n = 0; _ct_at = millis();
   ContactInfo c;
-  int total = the_mesh.getNumContacts();
+  int total = the_mesh.getTotalContactSlots();   // indeksy z pierwszymi 8 miejscami „anon”
   const int MAXC = (int)(sizeof(_cts) / sizeof(_cts[0]));
-  for (int i = 0; i < total; i++) {
+  for (int i = MAX_ANON_CONTACTS; i < total; i++) {
     if (!the_mesh.getContactByIdx(i, c) || c.type == ADV_TYPE_NONE) continue;
     Ct e = { (uint16_t) i, c.type, (uint8_t)(c.flags & 1), c.last_advert_timestamp };
     int pos = _ct_n;

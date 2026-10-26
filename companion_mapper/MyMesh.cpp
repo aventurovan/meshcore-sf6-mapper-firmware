@@ -2353,8 +2353,8 @@ bool MyMesh::uiAdminCli(const char* cmd) {
 }
 bool MyMesh::uiSendDirectText(const char* contact_name, const char* text) {
   ContactInfo c;
-  for (int i = 0; i < getNumContacts(); i++) {
-    if (!getContactByIdx(i, c) || strcmp(c.name, contact_name) != 0) continue;
+  for (int i = MAX_ANON_CONTACTS; i < getTotalContactSlots(); i++) {   // pierwsze 8 miejsc to „anon”
+    if (!getContactByIdx(i, c) || c.type == ADV_TYPE_NONE || strcmp(c.name, contact_name) != 0) continue;
     ContactInfo* p = lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
     if (!p) return false;
     uint32_t ack, timeout;
