@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.5.6"
+#define UI_VERSION       "1.5.7"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -476,8 +476,11 @@ void UITask::okClicks(int n) {
 
 // przycisk OK: klikniecia (1/2/3), przytrzymanie 2 s (odblokowanie) i 8 s (SOS)
 void UITask::okLoop() {
-  bool down = user_btn.isPressed();
   unsigned long now = millis();
+  // debounce: zmiana stanu liczy sie dopiero po 30 ms stabilnego odczytu (drgania styku dawaly dodatkowe klikniecia)
+  bool raw = user_btn.isPressed();
+  if (raw != _ok_raw) { _ok_raw = raw; _ok_raw_t = now; }
+  bool down = (now - _ok_raw_t >= 30) ? _ok_raw : _ok_down;
   if (down && !_ok_down) {
     _ok_down = true; _ok_t0 = now; _unlock_done = false; _sos_sent = false;
     _ok_woke = !_on;

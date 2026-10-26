@@ -90,6 +90,7 @@ private:
   unsigned long _sel_at = 0; int _sel_key = -1; bool _marquee = false;
   void selRow(const char* name, char* out, int outsz, int max_w);
   unsigned long _ok_t0 = 0, _click_t = 0;
+  bool _ok_raw = false; unsigned long _ok_raw_t = 0;   // odbijanie styku przycisku (debounce)
   int _clicks = 0;
   void okLoop();
   void okClicks(int n);
