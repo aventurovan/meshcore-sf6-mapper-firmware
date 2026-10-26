@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.3.1"
+#define UI_VERSION       "1.4.0"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -316,7 +316,7 @@ void UITask::kbdKey(char k) {
     if (_kc == 0) _kupper = !_kupper;
     else if (_kc == 1) { if (len < 130) { _kbd[len] = ' '; _kbd[len + 1] = 0; } }
     else if (_kc == 2) kbdKey('B');
-    else if (_kc == 3) { if (len) sendText(_kbd); else popup("Pusta wiadomość"); }
+    else if (_kc == 3) kbdSubmit();
     return;
   }
   const char* c = KB[_kr][_kc];
@@ -328,7 +328,8 @@ void UITask::kbdKey(char k) {
 void UITask::drawKbd() {
   char b[32], to[20];
   MapperGfx::fit(to, sizeof(to), _compose_to, 84);
-  snprintf(b, sizeof(b), "Do: %s", to);
+  static const char* const H[4] = { "Do: %s", "Hasło: %s", "Nazwa: %s", "Komenda: %s" };
+  snprintf(b, sizeof(b), H[_kbd_mode & 3], _kbd_mode == 0 ? to : "");
   _g.text(0, 0, b);
   snprintf(b, sizeof(b), "%d", (int) strlen(_kbd));
   _g.textRight(127, 0, b);
@@ -337,7 +338,17 @@ void UITask::drawKbd() {
   const char* p = _kbd; int n = 0; { const char* q = _kbd; while (*q) { mapperUtf8Next(q); n++; } }
   int skip = n > 20 ? n - 20 : 0;
   while (skip-- > 0) mapperUtf8Next(p);
-  int w = _g.text(0, 11, p);
+  int w;
+  if (_kbd_mode == 1) {                              // haslo: gwiazdki, ostatni znak widoczny
+    char m[48]; int k2 = 0;
+    const char* q = p;
+    while (*q && k2 < 40) {
+      const char* q0 = q; mapperUtf8Next(q);
+      if (*q) m[k2++] = '*';
+      else { int l = (int)(q - q0); memcpy(m + k2, q0, l); k2 += l; }
+    }
+    m[k2] = 0; w = _g.text(0, 11, m);
+  } else w = _g.text(0, 11, p);
   if ((millis() / 400) % 2) _g.rect(w + 1, 18, 5, 1);
   _g.hline(0, 20, 128);
   for (int r = 0; r < 4; r++) for (int c = 0; c < 13; c++) {
@@ -348,7 +359,9 @@ void UITask::drawKbd() {
     else _g.text(x + 1, y, tc);
   }
   _g.hline(0, 54, 128);
-  static const char* const BK[4] = { "Aa", "spacja", "usuń", "WYŚLIJ" };
+  static const char* const BK0[4] = { "Aa", "spacja", "usuń", "WYŚLIJ" };
+  static const char* const BK1[4] = { "Aa", "spacja", "usuń", "OK" };
+  const char* const* BK = _kbd_mode == 0 ? BK0 : BK1;
   static const int BX[4] = { 0, 16, 56, 88 };
   for (int i = 0; i < 4; i++) {
     int wv = _g.textWidth(BK[i]) + 2;
@@ -406,20 +419,6 @@ bool UITask::rptName(const uint8_t* p2, char* dest, int dsz) {
   }
   snprintf(dest, dsz, "#%02X%02X", p2[0], p2[1]);
   return false;
-}
-
-// kierunek ruchu z kolejnych pozycji GPS (Wio nie ma magnetometru): przesuniecie >= 15 m
-void UITask::headingLoop() {
-  unsigned long now = millis();
-  if ((long)(now - _hnext) < 0) return;
-  _hnext = now + 2000;
-  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
-  if (!l || !l->isValid()) return;
-  int32_t la = l->getLatitude(), lo = l->getLongitude();
-  if (!_hlat && !_hlon) { _hlat = la; _hlon = lo; return; }
-  double d = distM(_hlat / 1e6, _hlon / 1e6, la / 1e6, lo / 1e6);
-  if (d >= 15) { _heading = bearing(_hlat / 1e6, _hlon / 1e6, la / 1e6, lo / 1e6); _heading_at = now; _hlat = la; _hlon = lo; }
-  else if (now - _heading_at > 30000UL && d < 5) { _hlat = la; _hlon = lo; }
 }
 
 // ---------------- akcje ----------------
@@ -519,8 +518,8 @@ void UITask::loop() {
     return;
   }
 
-  headingLoop();
   if (_msg_save_at && (long)(now - _msg_save_at) >= 0) { _msg_save_at = 0; saveMsgs(); }
+  adminLoop();
   okLoop();
   char k = 0;
   if (joystick_left.check() == BUTTON_EVENT_CLICK) k = 'L';
@@ -584,9 +583,6 @@ void UITask::key(char k) {
       break;
     }
     case SCR_KBD: kbdKey(k); break;
-    case SCR_COMPASS:
-      if (k == 'B' || k == 'L' || k == 'O') _screen = SCR_RPT;
-      break;
     case SCR_SCAN:
       if (k == 'O') { if (!mapper.scanActive()) mapper.scanStart(); }
       else if (k == 'B' || k == 'L') _screen = SCR_HOME;
@@ -594,7 +590,10 @@ void UITask::key(char k) {
     case SCR_LINES:
       if (k == 'D' && _lines_top + 4 < _nlines) _lines_top++;
       else if (k == 'U' && _lines_top > 0) _lines_top--;
-      else if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
+      else if (k == 'B' || k == 'L' || k == 'O') { _screen = _lines_back; }
+      break;
+    case SCR_WAIT:
+      if (k == 'B' || k == 'L') { _wait_kind = 0; the_mesh.ui_admin.cli_wait = false; _screen = SCR_MENU; }
       break;
     case SCR_RPT:
       if (k == 'O') openMenu(10);
@@ -644,7 +643,7 @@ void UITask::homeKey(char k) {
         int idx = the_mesh.uiChannelIndex("Public");
         ChannelDetails cd;
         if (idx < 0 && the_mesh.getChannel(0, cd)) composeTo(cd.name, true); else composeTo("Public", true);
-        _kbd[0] = 0; _kr = 0; _kc = 0; _kupper = true; _kbd_from = SCR_HOME; _screen = SCR_KBD;
+        kbdOpen(0, SCR_HOME);
       } else if (_sel - 1 < _thread_n) { _thread_sel = _sel - 1; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD; }
       break;
     case P_RPT:
@@ -664,8 +663,8 @@ static const char* const QUICK[8] = { "OK", "Jadę", "Jestem na miejscu", "Odbi�
 static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
 
 int UITask::menuCount(int id) {
-  static const uint8_t C[11] = { 10, 4, 3, 7, 3, 2, 3, 2, 3, 8, 2 };
-  return id >= 0 && id < 11 ? C[id] : 0;
+  static const uint8_t C[15] = { 11, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
+  return id >= 0 && id < 15 ? C[id] : 0;
 }
 
 void UITask::menuItem(int id, int i, char* L, char* V) {
@@ -673,14 +672,15 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
   bool armed = _armed_item == id * 16 + i && millis() - _stop_armed < CONFIRM_MS;
   switch (id) {
     case 0: {
-      static const char* const N[10] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Restart", "Wyłącz" };
+      static const char* const N[11] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Hasła repeaterów", "Restart", "Wyłącz" };
       strcpy(L, N[i]);
       if (i == 0) strcpy(V, mapper.isRunning() ? "WŁ" : "STOP");
       if (i == 1) strcpy(V, isBluetoothEnabled() ? (hasConnection() ? "połącz." : "WŁ") : "WYŁ");
       if (i == 2) strcpy(V, the_mesh.mpRadioIsSF6() ? "SF6" : "inne!");
       if (i == 3) strcpy(V, _prefs->gps_enabled ? "WŁ" : "WYŁ");
       if (i == 5) strcpy(V, TO_LABEL[_timeout_idx & 3]);
-      if ((i == 8 || i == 9) && armed) strcpy(V, "OK?");
+      if (i == 8) { if (armed) strcpy(V, "usuń?"); else snprintf(V, 8, "%d", pwCount()); }
+      if ((i == 9 || i == 10) && armed) strcpy(V, "OK?");
       break;
     }
     case 1: {
@@ -741,9 +741,32 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
     }
     case 9: strcpy(L, QUICK[i]); break;
     case 10: {
-      static const char* const N[2] = { "Ulubiony", "Kompas" };
+      static const char* const N[3] = { "Ulubiony", "Zaloguj jako admin", "Zaloguj jako gość" };
       strcpy(L, N[i]);
       if (i == 0 && _rpt_sel < _rpt_n) strcpy(V, _rpts[_rpt_sel].fav ? "TAK" : "NIE");
+      if (i == 1 && _rpt_sel < _rpt_n) { char pw[24]; if (pwGet(_rpts[_rpt_sel].key, pw)) strcpy(V, "*"); }
+      break;
+    }
+    case 11: {
+      static const char* const N[5] = { "Stan", "Sąsiedzi", "Akcje", "Konsola", "Wyloguj" };
+      strcpy(L, N[i]);
+      break;
+    }
+    case 12: {
+      static const char* const N[2] = { "Zapamiętaj hasło", "Nie zapamiętuj" };
+      strcpy(L, N[i]);
+      break;
+    }
+    case 13: {
+      static const char* const N[7] = { "Wyślij advert", "Moc nadawania", "Preset SF6", "Pozycja = moja", "Zmień nazwę", "Synchronizuj czas", "Restart" };
+      strcpy(L, N[i]);
+      if (i == 1) snprintf(V, 12, "%d dBm", (int)_txp_sel);
+      if (i == 6 && armed) strcpy(V, "OK?");
+      break;
+    }
+    case 14: {
+      static const char* const N[7] = { "ver", "get radio", "get tx", "get name", "stats", "clock", "> własna komenda" };
+      strcpy(L, N[i]);
       break;
     }
     case 7: {
@@ -756,7 +779,7 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
   }
 }
 
-void UITask::openMenu(int id) { _menu = id; _msel[id] = 0; _screen = SCR_MENU; _armed_item = -1; if (id == 3) radioLoad(); }
+void UITask::openMenu(int id) { _menu = id; _msel[id] = 0; _screen = SCR_MENU; _armed_item = -1; if (id == 3) radioLoad(); if (id == 13) _txp_sel = 22; }
 
 static const float BWS[] = { 7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f };
 void UITask::radioLoad() {
@@ -769,11 +792,15 @@ bool UITask::radioChanged() {
 void UITask::menuKey(char k) {
   int n = menuCount(_menu), &s = _msel[_menu];
   if (k == 'U' || k == 'D') { s = (s + (k == 'D' ? 1 : n - 1)) % n; _armed_item = -1; return; }
-  if (k == 'B' || (k == 'L' && _menu >= 8)) {
+  bool cyc2 = _menu == 13 && s == 1;
+  if (k == 'B' || (k == 'L' && _menu >= 8 && !cyc2)) {
     if (_menu == 8 || _menu == 9) { _screen = SCR_THREAD; return; }
     if (_menu == 10) { _screen = SCR_RPT; return; }
+    if (_menu == 11 || _menu == 12) { openMenu(10); return; }
+    if (_menu == 13 || _menu == 14) { _menu = 11; _screen = SCR_MENU; return; }
     _screen = SCR_HOME; _page = P_SET; return;
   }
+  if (cyc2 && (k == 'L' || k == 'R')) { int v = _txp_sel + (k == 'R' ? 1 : -1); if (v > the_mesh.uiMaxTxPower()) v = 2; if (v < 2) v = the_mesh.uiMaxTxPower(); _txp_sel = v; return; }
   bool cycle = (_menu == 1 && s == 1) || (_menu == 3 && (s == 1 || (s >= 3 && s <= 5))) || (_menu == 6 && s == 0);
   if (k == 'L') { if (cycle) menuAction(-1); else { _screen = SCR_HOME; _page = P_SET; } return; }
   if (k == 'O' || k == 'R') menuAction(+1);
@@ -802,11 +829,12 @@ void UITask::menuAction(int dir) {
         MapperView v; mapper.getView(v);
         snprintf(b, sizeof(b), "mapper: do wysł. %lu", (unsigned long) v.pending);
         strcpy(_lines[_nlines++], b);
-        _lines_top = 0; _screen = SCR_LINES;
+        _lines_top = 0; _lines_back = SCR_HOME; _screen = SCR_LINES;
         return;
       }
-      if (i == 8) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
-      if (i == 9) {
+      if (i == 8) { if (!pwCount()) { popup("Brak zapamiętanych haseł"); return; } if (!armed) { arm(); return; } pwClear(); _armed_item = -1; popup("Hasła usunięte"); return; }
+      if (i == 9) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
+      if (i == 10) {
         if (!armed) { arm(); return; }
         popup("Wyłączanie..."); render(); delay(600);
         if (_display) _display->turnOff();
@@ -867,7 +895,7 @@ void UITask::menuAction(int dir) {
       saveUiPrefs();
       return;
     case 8:
-      if (i == 0) { _kbd[0] = 0; _kr = 0; _kc = 0; _kupper = true; _kbd_from = SCR_THREAD; _screen = SCR_KBD; }
+      if (i == 0) kbdOpen(0, SCR_THREAD);
       if (i == 1) openMenu(9);
       if (i == 2) { char b[140]; myPosition(b, sizeof(b)); if (b[0]) sendText(b); else popup("Brak pozycji GPS"); }
       return;
@@ -876,6 +904,8 @@ void UITask::menuAction(int dir) {
       return;
     case 10:
       if (_rpt_sel >= _rpt_n) return;
+      if (i == 1) { adminStartLogin(true); return; }
+      if (i == 2) { adminStartLogin(false); return; }
       if (i == 0) {
         uint8_t key[32]; memcpy(key, _rpts[_rpt_sel].key, 32);
         int r = the_mesh.uiToggleFavourite(key);
@@ -883,7 +913,40 @@ void UITask::menuAction(int dir) {
         int ni = rptIndexByKey(key); if (ni >= 0) _rpt_sel = ni;
         popup(r == 1 ? "Ulubiony" : r == 0 ? "Usunięto z ulubionych" : "Brak kontaktu", r == 1 ? "zawsze na górze listy" : NULL);
       }
-      if (i == 1) _screen = SCR_COMPASS;
+      return;
+    case 11:
+      if (i == 0) { if (the_mesh.uiAdminStatus()) adminWait(2); else popup("Błąd wysyłki"); }
+      if (i == 1) { if (the_mesh.uiAdminNeighbours()) adminWait(3); else popup("Błąd wysyłki"); }
+      if (i == 2 || i == 3) { if (!the_mesh.ui_admin.is_admin) { popup("Tylko dla admina"); return; } openMenu(i == 2 ? 13 : 14); }
+      if (i == 4) { the_mesh.uiAdminLogout(); _screen = SCR_RPT; popup("Wylogowano"); }
+      return;
+    case 12:
+      if (i == 0 && _rpt_sel < _rpt_n) { pwSet(_rpts[_rpt_sel].key, _pw_typed); popup("Hasło zapamiętane"); }
+      _menu = 11; _msel[11] = 0; _screen = SCR_MENU;
+      return;
+    case 13:
+      if (i == 0) adminCli("advert");
+      if (i == 1) { char c[24]; snprintf(c, sizeof(c), "set tx %d", (int)_txp_sel); adminCli(c); }
+      if (i == 2) adminCli("set radio 869.618,62.5,6,5");
+      if (i == 3) {
+        LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+        if (!l || !l->isValid()) { popup("Brak pozycji GPS"); return; }
+        char c[40];
+        snprintf(c, sizeof(c), "set lat %.6f", l->getLatitude() / 1e6);
+        snprintf(_cli_next, sizeof(_cli_next), "set lon %.6f", l->getLongitude() / 1e6);
+        adminCli(c);
+      }
+      if (i == 4) kbdOpen(2, SCR_MENU, _rpt_sel < _rpt_n ? _rpts[_rpt_sel].name : "");
+      if (i == 5) adminCli("clock sync");
+      if (i == 6) {
+        if (!armed) { arm(); return; }
+        _armed_item = -1;
+        if (the_mesh.uiAdminCli("reboot")) popup("Wysłano: reboot", "repeater się restartuje"); else popup("Błąd wysyłki");
+      }
+      return;
+    case 14:
+      if (i < 6) { static const char* const C[6] = { "ver", "get radio", "get tx", "get name", "stats", "clock" }; adminCli(C[i]); }
+      else kbdOpen(3, SCR_MENU);
       return;
     case 7:
       if (i == 0) {
@@ -921,7 +984,7 @@ void UITask::render() {
     case SCR_RPT: drawRptDetail(); break;
     case SCR_FREQ: drawFreq(); break;
     case SCR_KBD: break;
-    case SCR_COMPASS: drawCompass(); break;
+    case SCR_WAIT: drawWait(); break;
     case SCR_SCAN: drawScan(); break;
   }
   if (_pop_until > millis()) drawPopup();
@@ -1104,35 +1167,168 @@ void UITask::drawRptDetail() {
   _g.textRight(127, 54, "OK >");
 }
 
-// kompas: strzalka do repeatera wzgledem kierunku jazdy (albo polnocy, gdy stoimy)
-void UITask::drawCompass() {
-  if (_rpt_sel >= _rpt_n) { _screen = SCR_HOME; return; }
-  Rpt& r = _rpts[_rpt_sel];
-  char b[32], n[24];
-  MapperGfx::fit(n, sizeof(n), r.name, 124);
-  titleRow(_g, n, NULL);
-  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
-  if (!(r.lat || r.lon)) { _g.textCenter(64, 36, "repeater bez pozycji"); return; }
-  if (!l || !l->isValid()) { _g.textCenter(64, 36, "czekam na GPS"); return; }
-  double la = l->getLatitude() / 1e6, lo = l->getLongitude() / 1e6;
-  int br = bearing(la, lo, r.lat / 1e6, r.lon / 1e6);
-  int32_t dm = (int32_t) distM(la, lo, r.lat / 1e6, r.lon / 1e6);
-  bool moving = _heading >= 0 && millis() - _heading_at < 20000UL;
-  int rel = moving ? (br - _heading + 360) % 360 : br;
-  fmtDist(b, sizeof(b), dm); _g.text(0, 25, b, 2);
-  snprintf(b, sizeof(b), "%s %d°", compass(br), br); _g.text(0, 43, b);
-  _g.text(0, 54, moving ? "góra = przód" : "góra = północ");
-  const int cx = 106, cy = 39, R = 15;               // tarcza
-  for (int a2 = 0; a2 < 360; a2 += 15) _g.rect(cx + (int)(R * sin(a2 * DEG_TO_RAD)), cy - (int)(R * cos(a2 * DEG_TO_RAD)), 1, 1);
-  double ar = rel * DEG_TO_RAD;
-  int tx = cx + (int)((R - 2) * sin(ar)), ty = cy - (int)((R - 2) * cos(ar));
-  int bx = cx - (int)(6 * sin(ar)), by = cy + (int)(6 * cos(ar));
-  for (int k = 0; k <= 16; k++) { int x = bx + (tx - bx) * k / 16, y = by + (ty - by) * k / 16; _g.rect(x - 1, y - 1, 2, 2); }
-  double al = ar + 2.6, arr = ar - 2.6;               // grot
-  for (int k = 0; k <= 5; k++) {
-    _g.rect(tx + (int)(k * sin(al)), ty - (int)(k * cos(al)), 2, 2);
-    _g.rect(tx + (int)(k * sin(arr)), ty - (int)(k * cos(arr)), 2, 2);
+// ---------------- zarzadzanie repeaterem ----------------
+#define PW_FILE "/sf6pw"
+#define PW_MAX  8
+struct PwEntry { uint8_t key[6]; char pw[18]; };
+static PwEntry pw_tab[PW_MAX]; static bool pw_loaded = false;
+static void pwLoad() {
+  if (pw_loaded) return; pw_loaded = true; memset(pw_tab, 0, sizeof(pw_tab));
+  File f = InternalFS.open(PW_FILE, FILE_O_READ);
+  if (f) { f.read((uint8_t*) pw_tab, sizeof(pw_tab)); f.close(); }
+}
+static void pwSave() {
+  InternalFS.remove(PW_FILE);
+  File f = InternalFS.open(PW_FILE, FILE_O_WRITE);
+  if (f) { f.write((const uint8_t*) pw_tab, sizeof(pw_tab)); f.close(); }
+}
+bool UITask::pwGet(const uint8_t* key, char* out) {
+  pwLoad();
+  for (int i = 0; i < PW_MAX; i++) if (pw_tab[i].pw[0] && memcmp(pw_tab[i].key, key, 6) == 0) { strcpy(out, pw_tab[i].pw); return true; }
+  return false;
+}
+void UITask::pwSet(const uint8_t* key, const char* pw) {
+  pwLoad();
+  int slot = -1;
+  for (int i = 0; i < PW_MAX; i++) if (memcmp(pw_tab[i].key, key, 6) == 0) { slot = i; break; }
+  if (slot < 0) for (int i = 0; i < PW_MAX; i++) if (!pw_tab[i].pw[0]) { slot = i; break; }
+  if (slot < 0) { memmove(&pw_tab[0], &pw_tab[1], sizeof(PwEntry) * (PW_MAX - 1)); slot = PW_MAX - 1; }
+  memcpy(pw_tab[slot].key, key, 6);
+  strncpy(pw_tab[slot].pw, pw, sizeof(pw_tab[slot].pw) - 1); pw_tab[slot].pw[sizeof(pw_tab[slot].pw) - 1] = 0;
+  pwSave();
+}
+int UITask::pwCount() { pwLoad(); int n = 0; for (int i = 0; i < PW_MAX; i++) if (pw_tab[i].pw[0]) n++; return n; }
+void UITask::pwClear() { pwLoad(); memset(pw_tab, 0, sizeof(pw_tab)); pwSave(); }
+
+void UITask::kbdOpen(uint8_t mode, uint8_t from, const char* init) {
+  _kbd_mode = mode; _kbd_from = from;
+  strncpy(_kbd, init ? init : "", sizeof(_kbd) - 1); _kbd[sizeof(_kbd) - 1] = 0;
+  _kr = 0; _kc = 0; _kupper = (mode == 0 || mode == 2) && !_kbd[0];
+  _screen = SCR_KBD;
+}
+
+void UITask::kbdSubmit() {
+  if (_kbd_mode == 0) { if (_kbd[0]) sendText(_kbd); else popup("Pusta wiadomość"); return; }
+  if (_kbd_mode == 1) {
+    strncpy(_pw_typed, _kbd, sizeof(_pw_typed) - 1); _pw_typed[sizeof(_pw_typed) - 1] = 0; _pw_new = true;
+    if (_rpt_sel < _rpt_n && the_mesh.uiAdminLogin(_rpts[_rpt_sel].key, _pw_typed)) adminWait(1);
+    else { popup("Błąd wysyłki"); _screen = SCR_MENU; }
+    return;
   }
+  if (!_kbd[0]) { popup("Pusty tekst"); return; }
+  if (_kbd_mode == 2) { char c[48]; snprintf(c, sizeof(c), "set name %s", _kbd); _menu = 13; adminCli(c); return; }
+  if (_kbd_mode == 3) { _menu = 14; adminCli(_kbd); return; }
+}
+
+void UITask::adminStartLogin(bool admin) {
+  _pw_new = false;
+  const uint8_t* key = _rpts[_rpt_sel].key;
+  if (admin) {
+    char pw[24];
+    if (!pwGet(key, pw)) { kbdOpen(1, SCR_MENU); return; }
+    strcpy(_pw_typed, pw);
+    if (the_mesh.uiAdminLogin(key, pw)) adminWait(1); else popup("Błąd wysyłki");
+  } else {
+    _pw_typed[0] = 0;
+    if (the_mesh.uiAdminLogin(key, "")) adminWait(1); else popup("Błąd wysyłki");
+  }
+}
+
+void UITask::adminWait(uint8_t kind) {
+  _wait_kind = kind; _wait_t0 = millis();
+  uint32_t est = the_mesh.ui_admin.est_timeout;
+  _wait_ms = est + 6000; if (_wait_ms < 8000) _wait_ms = 8000; if (_wait_ms > 40000) _wait_ms = 40000;
+  _screen = SCR_WAIT; _dirty = true;
+}
+
+void UITask::adminCli(const char* cmd) {
+  strncpy(_cli_cmd, cmd, sizeof(_cli_cmd) - 1); _cli_cmd[sizeof(_cli_cmd) - 1] = 0;
+  if (the_mesh.uiAdminCli(cmd)) adminWait(4); else { popup("Błąd wysyłki"); _cli_next[0] = 0; _screen = SCR_MENU; }
+}
+
+void UITask::adminLoop() {
+  if (_screen != SCR_WAIT || !_wait_kind) return;
+  MyMesh::UiAdmin& a = the_mesh.ui_admin;
+  unsigned long now = millis();
+  char b[40];
+  if (_wait_kind == 1 && a.login >= 2) {
+    _wait_kind = 0;
+    if (a.login == 2) {
+      if (_pw_new && _pw_typed[0]) { _menu = 12; _msel[12] = 0; _screen = SCR_MENU; }
+      else { _menu = 11; _msel[11] = 0; _screen = SCR_MENU; }
+      popup("Zalogowano", a.is_admin ? "jako admin" : "jako gość");
+    } else {
+      if (!_pw_new && _pw_typed[0] && _rpt_sel < _rpt_n) pwSet(_rpts[_rpt_sel].key, "");   // zapamietane haslo nie pasuje
+      _menu = 10; _screen = SCR_MENU;
+      popup("Logowanie nieudane", _pw_typed[0] ? "złe hasło?" : "gość niedozwolony?");
+    }
+    return;
+  }
+  if (_wait_kind == 2 && a.status_ready) {
+    _wait_kind = 0;
+    struct __attribute__((packed)) St { uint16_t mv, queue; int16_t noise, rssi; uint32_t recv, sent, air, up, sf, sd, rf, rd; uint16_t err; int16_t snr; } st;
+    memset(&st, 0, sizeof(st)); memcpy(&st, a.status, a.status_len < sizeof(st) ? a.status_len : sizeof(st));
+    _nlines = 0; strcpy(_lines_title, "Stan");
+    snprintf(_lines[_nlines++], 32, "działa\t%lud %luh", (unsigned long)(st.up / 86400), (unsigned long)((st.up / 3600) % 24));
+    snprintf(_lines[_nlines++], 32, "bateria\t%u,%02u V", st.mv / 1000, (st.mv % 1000) / 10);
+    snprintf(_lines[_nlines++], 32, "szum radia\t%d dBm", st.noise);
+    char sn[12]; fmtSnr(sn, sizeof(sn), (int8_t) st.snr);
+    snprintf(_lines[_nlines++], 32, "ost. RSSI/SNR\t%d/%s", st.rssi, sn);
+    snprintf(_lines[_nlines++], 32, "odebrane\t%lu", (unsigned long) st.recv);
+    snprintf(_lines[_nlines++], 32, "wysłane\t%lu", (unsigned long) st.sent);
+    snprintf(_lines[_nlines++], 32, "kolejka / błędy\t%u / %u", st.queue, st.err);
+    _lines_top = 0; _lines_back = SCR_MENU; _menu = 11; _screen = SCR_LINES;
+    return;
+  }
+  if (_wait_kind == 3 && a.nb_ready) {
+    _wait_kind = 0;
+    uint16_t total = 0, cnt = 0;
+    if (a.nb_len >= 4) { memcpy(&total, a.nb, 2); memcpy(&cnt, a.nb + 2, 2); }
+    snprintf(_lines_title, sizeof(_lines_title), "Sąsiedzi (%u)", total);
+    _nlines = 0;
+    for (int i = 0; i < cnt && _nlines < 8; i++) {
+      int o = 4 + i * 11; if (o + 11 > a.nb_len) break;
+      char nm[24], nf[20], sn[12];
+      rptName(a.nb + o, nm, sizeof(nm));
+      if (nm[0] == '#') snprintf(nm, sizeof(nm), "#%02X%02X%02X", a.nb[o], a.nb[o + 1], a.nb[o + 2]);
+      MapperGfx::fit(nf, sizeof(nf), nm, 84);
+      fmtSnr(sn, sizeof(sn), (int8_t) a.nb[o + 10]);
+      snprintf(_lines[_nlines++], 32, "%s\t%s", nf, sn);
+    }
+    if (!_nlines) strcpy(_lines[_nlines++], "brak sąsiadów");
+    _lines_top = 0; _lines_back = SCR_MENU; _menu = 11; _screen = SCR_LINES;
+    return;
+  }
+  if (_wait_kind == 4 && a.cli_ready) {
+    a.cli_ready = false;
+    if (_cli_next[0]) { char nx[48]; strcpy(nx, _cli_next); _cli_next[0] = 0; adminCli(nx); return; }
+    _wait_kind = 0;
+    snprintf(_lines_title, sizeof(_lines_title), "> %s", _cli_cmd);
+    char tmp[12][32]; int n = wrapText(a.cli, tmp, 8, 21);
+    _nlines = 0; for (int i = 0; i < n; i++) strcpy(_lines[_nlines++], tmp[i]);
+    if (!_nlines) strcpy(_lines[_nlines++], "(pusta odpowiedź)");
+    _lines_top = 0; _lines_back = SCR_MENU; _screen = SCR_LINES;
+    return;
+  }
+  if (now - _wait_t0 > _wait_ms) {
+    _wait_kind = 0; a.cli_wait = false; _cli_next[0] = 0;
+    snprintf(b, sizeof(b), "po %lu s", (unsigned long)(_wait_ms / 1000));
+    popup("Brak odpowiedzi", b);
+    if (a.login == 1) { a.login = 3; _menu = 10; }
+    _screen = SCR_MENU;
+  } else _dirty = true;
+}
+
+void UITask::drawWait() {
+  static const char* const T[5] = { "", "Logowanie", "Stan", "Sąsiedzi", "Konsola" };
+  char n[24];
+  if (_rpt_sel < _rpt_n) MapperGfx::fit(n, sizeof(n), _rpts[_rpt_sel].name, 124); else n[0] = 0;
+  titleRow(_g, n, NULL);
+  _g.textCenter(64, 25, T[_wait_kind % 5]);
+  _g.textCenter(64, 35, "czekam na odpowiedź...");
+  unsigned long el = millis() - _wait_t0;
+  _g.progress(8, 45, 112, 6, (int)(el * 100 / (_wait_ms ? _wait_ms : 1)));
+  _g.text(0, 55, "wstecz: przerwij");
 }
 
 // „Co tu slychac?”: wynik pingu z ekranu (repeatery, ktore odpowiedzialy, SNR odbior/nadawanie)
@@ -1168,11 +1364,14 @@ void UITask::drawSettings() {
 }
 
 void UITask::drawMenu() {
-  static const char* const T[11] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk",
-                                     "Odpowiedz", "Szybka odpowiedź", "Repeater" };
+  static const char* const T[15] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk",
+                                     "Odpowiedz", "Szybka odpowiedź", "Repeater", "Repeater", "Hasło", "Akcje", "Konsola" };
   char tt[24];
   if (_menu == 8 || _menu == 9) { MapperGfx::fit(tt, sizeof(tt), _compose_to, 120); titleRow(_g, tt, NULL); }
-  else if (_menu == 10 && _rpt_sel < _rpt_n) { MapperGfx::fit(tt, sizeof(tt), _rpts[_rpt_sel].name, 120); titleRow(_g, tt, NULL); }
+  else if ((_menu == 10 || _menu == 11) && _rpt_sel < _rpt_n) {
+    const char* tag = _menu == 11 ? (the_mesh.ui_admin.is_admin ? "ADMIN" : "GOŚĆ") : NULL;
+    MapperGfx::fit(tt, sizeof(tt), _rpts[_rpt_sel].name, tag ? 84 : 124); titleRow(_g, tt, tag);
+  }
   else titleRow(_g, T[_menu], NULL);
   int n = menuCount(_menu), s = _msel[_menu];
   int top = s >= ROWS ? s - ROWS + 1 : 0;
@@ -1190,7 +1389,12 @@ void UITask::drawLines() {                       // 4 linie, gora/dol przewija
   char pg[12] = "";
   if (_nlines > 4) snprintf(pg, sizeof(pg), "%d/%d", _lines_top + 1, _nlines - 3);
   titleRow(_g, _lines_title, pg);
-  for (int r = 0; r < 4 && _lines_top + r < _nlines; r++) _g.text(0, 24 + r * 10, _lines[_lines_top + r]);
+  for (int r = 0; r < 4 && _lines_top + r < _nlines; r++) {
+    char ln[32]; strcpy(ln, _lines[_lines_top + r]);
+    char* tab = strchr(ln, '\t');
+    if (tab) { *tab = 0; _g.textRight(127, 24 + r * 10, tab + 1); }
+    _g.text(0, 24 + r * 10, ln);
+  }
 }
 
 void UITask::drawFreq() {                        // edycja czestotliwosci cyfra po cyfrze

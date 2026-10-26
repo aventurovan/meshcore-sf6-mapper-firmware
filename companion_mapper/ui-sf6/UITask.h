@@ -39,7 +39,7 @@ private:
   MapperGfx _g;
 
   // ekrany
-  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ, SCR_KBD, SCR_COMPASS, SCR_SCAN };
+  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ, SCR_KBD, SCR_SCAN, SCR_WAIT };
   enum Page { P_START, P_MSGS, P_MAPPER, P_RPT, P_SET, P_COUNT };
   uint8_t _screen = SCR_SPLASH, _page = P_START;
   unsigned long _splash_at = 0;
@@ -126,6 +126,9 @@ private:
   // pisanie wiadomosci (klawiatura ekranowa)
   char _compose_to[24]; bool _compose_chan = true;
   char _kbd[136]; int _kr = 0, _kc = 0; bool _kupper = false; uint8_t _kbd_from = 0;
+  uint8_t _kbd_mode = 0;           // 0 wiadomosc, 1 haslo, 2 nazwa repeatera, 3 komenda konsoli
+  void kbdOpen(uint8_t mode, uint8_t from, const char* init = "");
+  void kbdSubmit();
   void composeTo(const char* to, bool chan);
   void kbdKey(char k);
   void drawKbd();
@@ -134,11 +137,24 @@ private:
   // wiadomosci zapisane w pamieci (zostaja po restarcie)
   unsigned long _msg_save_at = 0;
   void saveMsgs(); void loadMsgs();
-  // kierunek ruchu z GPS (do kompasu)
-  int32_t _hlat = 0, _hlon = 0; int _heading = -1; unsigned long _heading_at = 0, _hnext = 0;
-  void headingLoop();
-  void drawCompass();
   void drawScan();
+  // zarzadzanie repeaterem
+  uint8_t _wait_kind = 0;          // 1 logowanie, 2 stan, 3 sasiedzi, 4 komenda
+  unsigned long _wait_t0 = 0, _wait_ms = 0;
+  uint8_t _lines_back = 0;         // dokad wraca ekran z liniami
+  char _pw_typed[24]; bool _pw_new = false;
+  char _cli_cmd[48];
+  char _cli_next[48];              // druga komenda w kolejce (np. set lon po set lat)
+  int8_t _txp_sel = 22;
+  void adminWait(uint8_t kind);
+  void adminLoop();
+  void adminCli(const char* cmd);
+  void adminStartLogin(bool admin);
+  bool pwGet(const uint8_t* key, char* out);
+  void pwSet(const uint8_t* key, const char* pw);
+  int  pwCount();
+  void pwClear();
+  void drawWait();
   int  rptIndexByKey(const uint8_t* key);
   int  _rpt_sel = 0;
   void menuItem(int id, int i, char* label, char* value);

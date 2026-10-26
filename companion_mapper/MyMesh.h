@@ -121,6 +121,22 @@ public:
   bool uiSendDirectText(const char* contact_name, const char* text);     // wiadomosc prywatna (kontakt po nazwie)
   int  uiToggleFavourite(const uint8_t* pub_key);                         // 1 = ulubiony, 0 = nie, -1 = brak kontaktu
   int  uiChannelIndex(const char* name);
+
+  // zarzadzanie repeaterem z ekranu (logowanie, stan, sasiedzi, komendy) — odpowiedzi nie ida do aplikacji
+  struct UiAdmin {
+    uint8_t key[32]; bool active;
+    uint8_t login;            // 0 brak, 1 czeka, 2 zalogowany, 3 blad
+    bool is_admin;
+    uint32_t status_tag; bool status_ready; uint8_t status[96]; uint8_t status_len;
+    uint32_t nb_tag; bool nb_ready; uint8_t nb[160]; uint8_t nb_len;
+    bool cli_wait, cli_ready; char cli[168];
+    uint32_t est_timeout;
+  } ui_admin;
+  bool uiAdminLogin(const uint8_t* key, const char* password);
+  bool uiAdminStatus();
+  bool uiAdminNeighbours();
+  bool uiAdminCli(const char* cmd);
+  void uiAdminLogout() { ui_admin.active = false; ui_admin.login = 0; }
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

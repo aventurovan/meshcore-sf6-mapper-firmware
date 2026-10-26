@@ -531,6 +531,11 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+  if (ui_admin.active && ui_admin.cli_wait && memcmp(from.id.pub_key, ui_admin.key, 4) == 0) {   // odpowiedz konsoli z ekranu
+    strncpy(ui_admin.cli, text, sizeof(ui_admin.cli) - 1); ui_admin.cli[sizeof(ui_admin.cli) - 1] = 0;
+    ui_admin.cli_wait = false; ui_admin.cli_ready = true;
+    return;
+  }
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -676,6 +681,29 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
   uint32_t tag;
   memcpy(&tag, data, 4);
+
+  // odpowiedzi na zapytania z ekranu (zarzadzanie repeaterem) — nie przekazujemy ich do aplikacji
+  if (ui_admin.active && memcmp(contact.id.pub_key, ui_admin.key, 4) == 0) {
+    if (ui_admin.login == 1) {
+      if (len >= 6 && memcmp(&data[4], "OK", 2) == 0) { ui_admin.login = 2; ui_admin.is_admin = false; }
+      else if (len >= 7 && data[4] == RESP_SERVER_LOGIN_OK) {
+        uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
+        if (keep_alive_secs > 0) startConnection(contact, keep_alive_secs);
+        ui_admin.login = 2; ui_admin.is_admin = (data[6] & 0x01) != 0;
+      } else ui_admin.login = 3;
+      return;
+    }
+    if (ui_admin.nb_tag && tag == ui_admin.nb_tag && len > 4) {
+      ui_admin.nb_tag = 0; ui_admin.nb_len = (len - 4) > sizeof(ui_admin.nb) ? sizeof(ui_admin.nb) : len - 4;
+      memcpy(ui_admin.nb, &data[4], ui_admin.nb_len); ui_admin.nb_ready = true;
+      return;
+    }
+    if (ui_admin.status_tag && len > 4) {
+      ui_admin.status_tag = 0; ui_admin.status_len = (len - 4) > sizeof(ui_admin.status) ? sizeof(ui_admin.status) : len - 4;
+      memcpy(ui_admin.status, &data[4], ui_admin.status_len); ui_admin.status_ready = true;
+      return;
+    }
+  }
 
   if (pending_login && memcmp(&pending_login, contact.id.pub_key, 4) == 0) { // check for login response
     // yes, is response to pending sendLogin()
@@ -2260,6 +2288,45 @@ bool MyMesh::uiAdvertFlood() {
                     : createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
   if (!pkt) return false;
   sendFlood(pkt);
+  return true;
+}
+bool MyMesh::uiAdminLogin(const uint8_t* key, const char* password) {
+  ContactInfo* c = lookupContactByPubKey(key, PUB_KEY_SIZE);
+  if (!c) return false;
+  memset(&ui_admin, 0, sizeof(ui_admin));
+  memcpy(ui_admin.key, key, PUB_KEY_SIZE); ui_admin.active = true; ui_admin.login = 1;
+  uint32_t est = 0;
+  if (sendLogin(*c, password, est) == MSG_SEND_FAILED) { ui_admin.login = 3; return false; }
+  ui_admin.est_timeout = est;
+  return true;
+}
+bool MyMesh::uiAdminStatus() {
+  ContactInfo* c = ui_admin.active ? lookupContactByPubKey(ui_admin.key, PUB_KEY_SIZE) : NULL;
+  if (!c) return false;
+  uint32_t tag = 0, est = 0;
+  ui_admin.status_ready = false;
+  if (sendRequest(*c, REQ_TYPE_GET_STATUS, tag, est) == MSG_SEND_FAILED) return false;
+  ui_admin.status_tag = tag ? tag : 1; ui_admin.est_timeout = est;
+  return true;
+}
+bool MyMesh::uiAdminNeighbours() {
+  ContactInfo* c = ui_admin.active ? lookupContactByPubKey(ui_admin.key, PUB_KEY_SIZE) : NULL;
+  if (!c) return false;
+  uint8_t req[11] = { 0x06, 0, 12, 0, 0, 2, 6 };     // GET_NEIGHBOURS v0: 12 szt., od 0, najsilniejsze, 6 B klucza
+  getRNG()->random(&req[7], 4);
+  uint32_t tag = 0, est = 0;
+  ui_admin.nb_ready = false;
+  if (sendRequest(*c, req, sizeof(req), tag, est) == MSG_SEND_FAILED) return false;
+  ui_admin.nb_tag = tag ? tag : 1; ui_admin.est_timeout = est;
+  return true;
+}
+bool MyMesh::uiAdminCli(const char* cmd) {
+  ContactInfo* c = ui_admin.active ? lookupContactByPubKey(ui_admin.key, PUB_KEY_SIZE) : NULL;
+  if (!c) return false;
+  uint32_t est = 0;
+  ui_admin.cli_ready = false; ui_admin.cli_wait = true;
+  if (sendCommandData(*c, getRTCClock()->getCurrentTimeUnique(), 0, cmd, est) == MSG_SEND_FAILED) { ui_admin.cli_wait = false; return false; }
+  ui_admin.est_timeout = est;
   return true;
 }
 bool MyMesh::uiSendDirectText(const char* contact_name, const char* text) {

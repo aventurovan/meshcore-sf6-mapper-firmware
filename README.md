@@ -164,8 +164,16 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   - **wiadomości zostają po restarcie** (ostatnie 32, zapis w pamięci flash);
   - **Repeatery:** pierwsza pozycja „> Co tu słychać?” wysyła jednorazowy ping i pokazuje repeatery, które odpowiedziały,
     z SNR odbioru i nadawania. W szczegółach repeatera OK → **Ulubiony** (gwiazdka, zawsze na górze listy, ten sam znacznik
-    co w aplikacji MeshCore; ulubione nie są usuwane przy pełnej liście kontaktów) i **Kompas** (strzałka do repeatera;
-    w ruchu góra = kierunek jazdy, na postoju góra = północ, plus odległość i kierunek);
+    co w aplikacji MeshCore; ulubione nie są usuwane przy pełnej liście kontaktów);
+  - **zarządzanie repeaterem (od 1.4.0):** w szczegółach repeatera OK → **Zaloguj jako admin** (hasło z klawiatury,
+    można je zapamiętać; „*” = hasło zapamiętane) albo **Zaloguj jako gość**. Po zalogowaniu:
+    - **Stan:** czas działania, bateria, szum radia, ostatni RSSI/SNR, pakiety odebrane i wysłane, kolejka i błędy;
+    - **Sąsiedzi:** repeatery słyszane bezpośrednio przez ten repeater, z SNR;
+    - **Akcje** (admin): wyślij advert, moc nadawania, preset SF6, **pozycja = moja pozycja GPS**, zmień nazwę,
+      synchronizuj czas, restart (z potwierdzeniem). Zmiana radia działa po restarcie repeatera;
+    - **Konsola** (admin): `ver`, `get radio`, `get tx`, `get name`, `stats`, `clock` albo własna komenda z klawiatury,
+      odpowiedź repeatera na ekranie;
+    - zapamiętane hasła usuniesz w Ustawieniach → Hasła repeaterów.
   - **sterowanie:** góra/dół przewija listy, OK wybiera, wstecz cofa, przytrzymanie wstecz wraca na Start.
 - **Skróty przycisku OK (Wio):**
 
