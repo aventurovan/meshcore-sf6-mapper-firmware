@@ -14,6 +14,9 @@
 
 CompanionMapper mapper;
 
+// wersja bez ekranu (brak UITask): sygnal dzwiekowy niedostepny
+__attribute__((weak)) void mapperUiHit() {}
+
 static double distM(int32_t a1, int32_t o1, int32_t a2, int32_t o2) {
   double la1 = a1 / 1e6 * DEG_TO_RAD, la2 = a2 / 1e6 * DEG_TO_RAD;
   double x = (o2 - o1) / 1e6 * DEG_TO_RAD * cos((la1 + la2) / 2), y = la2 - la1;

@@ -8,6 +8,7 @@ Firmware do mapowania zasięgu sieci **MeshCore Południe (SF6)**. Dane z urząd
 | **SF6 Mapper (tracker)** – samodzielny tracker, tylko mapuje | Seeed Wio Tracker L1 / L1 Pro | `SF6Mapper-WioTrackerL1-<wersja>.uf2` |
 | **Companion + SF6 Mapper** – zwykły companion MeshCore z mapowaniem bez telefonu | Seeed Wio Tracker L1 / L1 Pro | `Companion-SF6Mapper-WioTrackerL1-<wersja>.uf2` |
 | **Companion + SF6 Mapper** | LilyGO T-Echo | `Companion-SF6Mapper-T-Echo-<wersja>.uf2` |
+| **Companion + SF6 Mapper, bez ekranu** (np. uszkodzony e-papier) | LilyGO T-Echo | `Companion-SF6Mapper-T-Echo-bez-ekranu-<wersja>.uf2` |
 
 ## Pobieranie i wgrywanie
 
@@ -215,3 +216,13 @@ Samodzielny tracker (`sf6_mapper`) jest tylko dla Wio Tracker L1, bo korzysta z 
 ---
 
 Firmware oparte na [MeshCore](https://github.com/meshcore-dev/MeshCore) (licencja MIT) — szczegóły w [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+### T-Echo bez ekranu (uszkodzony e-papier)
+
+Plik `Companion-SF6Mapper-T-Echo-bez-ekranu-<wersja>.uf2` to ten sam companion z mapperem, ale bez obsługi wyświetlacza:
+
+- **PIN Bluetooth jest stały: `123456`.** Zwykła wersja pokazuje losowy PIN na ekranie, a bez działającego ekranu
+  nie dałoby się go odczytać. PIN można później zmienić w aplikacji MeshCore (Ustawienia → BLE PIN).
+- **Mapperem sterujesz z aplikacji Mapper SF6:** karta „SF6 Mapper w companionie” (Włącz/Zatrzymaj razem z GPS,
+  ping co 20–60 s, zrzut danych, podgląd LIVE). Ustawienia zostają po wyłączeniu, więc wystarczy raz włączyć mapper.
+- Wiadomości, kontakty i kanały działają normalnie przez aplikację MeshCore.

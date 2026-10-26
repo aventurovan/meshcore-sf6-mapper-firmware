@@ -53,8 +53,8 @@ jobs:
       - name: Buduj
         working-directory: MeshCore
         run: |
-          pio run -e WioTrackerL1_sf6_mapper -e WioTrackerL1_companion_mapper_ble -e LilyGo_T-Echo_companion_mapper_ble
-          for E in WioTrackerL1_sf6_mapper WioTrackerL1_companion_mapper_ble LilyGo_T-Echo_companion_mapper_ble; do
+          pio run -e WioTrackerL1_sf6_mapper -e WioTrackerL1_companion_mapper_ble -e LilyGo_T-Echo_companion_mapper_ble -e LilyGo_T-Echo_companion_mapper_ble_noscreen
+          for E in WioTrackerL1_sf6_mapper WioTrackerL1_companion_mapper_ble LilyGo_T-Echo_companion_mapper_ble LilyGo_T-Echo_companion_mapper_ble_noscreen; do
             python3 bin/uf2conv/uf2conv.py .pio/build/$E/firmware.hex -c -o .pio/build/$E/firmware.uf2 -f 0xADA52840
           done
 
@@ -68,6 +68,8 @@ jobs:
           cp MeshCore/.pio/build/WioTrackerL1_companion_mapper_ble/firmware.zip out/Companion-SF6Mapper-WioTrackerL1-$VER-ota.zip 2>/dev/null || true
           cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble/firmware.uf2 out/Companion-SF6Mapper-T-Echo-$VER.uf2
           cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble/firmware.zip out/Companion-SF6Mapper-T-Echo-$VER-ota.zip 2>/dev/null || true
+          cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble_noscreen/firmware.uf2 out/Companion-SF6Mapper-T-Echo-bez-ekranu-$VER.uf2
+          cp MeshCore/.pio/build/LilyGo_T-Echo_companion_mapper_ble_noscreen/firmware.zip out/Companion-SF6Mapper-T-Echo-bez-ekranu-$VER-ota.zip 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
