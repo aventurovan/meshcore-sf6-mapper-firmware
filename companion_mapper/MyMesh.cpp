@@ -1,4 +1,7 @@
 #include "MyMesh.h"
+#if defined(QSPIFLASH)
+  #include <CustomLFS_QSPIFlash.h>
+#endif
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
@@ -2297,6 +2300,44 @@ bool MyMesh::uiAdvertFlood() {
   sendFlood(pkt);
   return true;
 }
+// Odtwarzanie kontaktow: companion trzyma kopie ostatnich advertow (do 100) w pliku /adv_blobs.
+// Z kazdej kopii odtwarzamy kontakt (nazwa, typ, pozycja), jesli nie ma go w kontaktach.
+int MyMesh::uiRestoreContacts() {
+#if defined(QSPIFLASH)
+  FILESYSTEM* fs = &QSPIFlash;
+#else
+  FILESYSTEM* fs = &InternalFS;
+#endif
+  File f = fs->open("/adv_blobs", FILE_O_READ);
+  if (!f) return -1;
+  struct Rec { uint32_t ts; uint8_t key[7]; uint8_t len; uint8_t data[2 + 32 + PUB_KEY_SIZE + 4 + SIGNATURE_SIZE + MAX_ADVERT_DATA_SIZE]; };
+  static Rec r;
+  int added = 0;
+  while (f.read((uint8_t*) &r, sizeof(r)) == sizeof(r)) {
+    if (r.len == 0 || r.len > sizeof(r.data)) continue;
+    mesh::Packet* pkt = obtainNewPacket();
+    if (!pkt) break;
+    if (pkt->readFrom(r.data, r.len) && pkt->getPayloadType() == PAYLOAD_TYPE_ADVERT && pkt->payload_len > PUB_KEY_SIZE + 4 + SIGNATURE_SIZE) {
+      mesh::Identity id(pkt->payload);
+      uint32_t ts; memcpy(&ts, &pkt->payload[PUB_KEY_SIZE], 4);
+      const uint8_t* app = &pkt->payload[PUB_KEY_SIZE + 4 + SIGNATURE_SIZE];
+      int app_len = pkt->payload_len - (PUB_KEY_SIZE + 4 + SIGNATURE_SIZE);
+      AdvertDataParser parser(app, app_len);
+      if (parser.isValid() && parser.hasName() && !lookupContactByPubKey(id.pub_key, PUB_KEY_SIZE)) {
+        ContactInfo ci;
+        memset(&ci, 0, sizeof(ci));
+        populateContactFromAdvert(ci, id, parser, ts);
+        ci.lastmod = getRTCClock()->getCurrentTime();
+        if (addContact(ci)) added++;
+      }
+    }
+    releasePacket(pkt);
+  }
+  f.close();
+  if (added) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  return added;
+}
+
 bool MyMesh::uiAddHeard(int i) {
   if (i < 0 || i >= ui_heard_n) return false;
   if (lookupContactByPubKey(ui_heard[i].id.pub_key, PUB_KEY_SIZE)) return true;

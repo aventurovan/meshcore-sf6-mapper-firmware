@@ -146,6 +146,7 @@ public:
   bool uiIsContact(const uint8_t* key) { return lookupContactByPubKey(key, PUB_KEY_SIZE) != NULL; }
   bool uiAddHeard(int i);
   bool uiRemoveContact(const uint8_t* key);
+  int  uiRestoreContacts();                 // odtworzenie kontaktow z zapisanych advertow (/adv_blobs, do 100 ostatnich)
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

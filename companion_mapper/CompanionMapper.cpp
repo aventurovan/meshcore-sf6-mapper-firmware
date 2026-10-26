@@ -34,7 +34,9 @@ CompanionMapper::CompanionMapper() : _host(NULL), _cfgfs(NULL), _run(false), _in
 
 void CompanionMapper::begin(MapperHost* host, FILESYSTEM* logfs, FILESYSTEM* cfgfs) {
   _host = host; _cfgfs = cfgfs;
-  _log.begin(logfs, logfs == cfgfs ? 64UL * 1024UL : MAP_LOG_MAX_BYTES);
+  // flash QSPI jest wspolny z kontaktami i kanalami companiona: log max 512 kB (kompaktowanie potrzebuje drugie tyle)
+  _logfs = logfs;
+  _log.begin(logfs, logfs == cfgfs ? 64UL * 1024UL : 512UL * 1024UL);
   loadSettings();
   _session++; saveSettings();                       // kazde wlaczenie = nowa sesja
   _next_ping = millis() + 5000;
@@ -154,6 +156,17 @@ void CompanionMapper::startPing() {
   _next_ping = _last_ping + (unsigned long) _interval * 1000UL;
 }
 
+// wolne miejsce na flashu z logiem (LittleFS): ponizej 384 kB przestajemy zapisywac punkty
+bool CompanionMapper::fsLow() {
+  if (!_logfs) return false;
+  lfs_t* l = _logfs->_getFS();
+  if (!l || !l->cfg) return false;
+  lfs_size_t used = 0;
+  if (lfs_traverse(l, [](void* p, lfs_block_t b) -> int { (*(lfs_size_t*) p)++; return 0; }, &used)) return false;
+  uint32_t free_b = (uint32_t)(l->cfg->block_count - used) * l->cfg->block_size;
+  return free_b < 384UL * 1024UL;
+}
+
 bool CompanionMapper::scanStart() {
   if (!_host) return false;
   uint8_t d[10];
@@ -227,7 +240,8 @@ void CompanionMapper::finishPing() {
   _hdr.n = (uint8_t) _resp_n;
   if (_resp_n == 0 && limitSuspect(now)) _hdr.flags |= MAP_REC_LIMIT;
   for (int i = 0; i < _resp_n; i++) limitRecord(_resp[i].prefix, now);
-  _log.append(_hdr, _resp);
+  if (fsLow()) _fs_low = true;                      // za malo miejsca: nie zapisujemy (kontakty companiona sa wazniejsze)
+  else { _fs_low = false; _log.append(_hdr, _resp); }
   _last_n = _resp_n;
   if (_resp_n > 0) {
     _hits++;
@@ -251,13 +265,15 @@ void CompanionMapper::finishPing() {
 
 void CompanionMapper::loop() {
   if (!_host) return;
+  static unsigned long fs_check = 0;
+  if (_fs_low && millis() - fs_check > 30000UL) { fs_check = millis(); _fs_low = fsLow(); }   // po zrzucie miejsce wraca
   movementLoop();
   syncLoop(_host->mpSerial());
   if (_collecting) {
     if ((long)(millis() - _collect_until) >= 0) finishPing();
     return;
   }
-  if (!_run || _log.isFull() || !gpsFix() || !_host->mpRadioIsSF6()) return;
+  if (!_run || _log.isFull() || _fs_low || !gpsFix() || !_host->mpRadioIsSF6()) return;
   if (_phone_ping_at && millis() - _phone_ping_at < CMAP_PHONE_HOLD_MS) return;
   if ((long)(millis() - _next_ping) >= 0) startPing();
 }
@@ -379,7 +395,7 @@ void CompanionMapper::getView(MapperView& v) {
   v.sats = l ? (int) l->satellitesCount() : 0;
   v.stationary = _still >= CMAP_STATIONARY;
   v.phone_mapping = _phone_ping_at && millis() - _phone_ping_at < CMAP_PHONE_HOLD_MS;
-  v.log_full = _log.isFull(); v.collecting = _collecting;
+  v.log_full = _log.isFull() || _fs_low; v.collecting = _collecting;
   v.interval_s = _interval;
   long s = ((long)(_next_ping - millis()) + 999) / 1000; v.next_ping_s = s < 0 ? 0 : (int) s;
   v.pings = _pings; v.hits = _hits; v.pending = _log.pending();

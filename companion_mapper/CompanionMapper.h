@@ -73,6 +73,9 @@ class CompanionMapper {
   uint8_t _last_prefix[2];
   int8_t _last_snr;
   bool _sound;
+  FILESYSTEM* _logfs = NULL;
+  bool _fs_low = false;
+  bool fsLow();
   uint32_t _scan_tag = 0;
   unsigned long _scan_until = 0;
   int _scan_n = 0;

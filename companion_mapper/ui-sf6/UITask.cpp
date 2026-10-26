@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.5.1"
+#define UI_VERSION       "1.5.2"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -676,7 +676,7 @@ static const char* const QUICK[8] = { "OK", "Jadę", "Jestem na miejscu", "Odbi�
 static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
 
 int UITask::menuCount(int id) {
-  static const uint8_t C[15] = { 11, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
+  static const uint8_t C[15] = { 12, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
   if (id == 15) { uint8_t a[4]; return ctMenu(a); }
   return id >= 0 && id < 15 ? C[id] : 0;
 }
@@ -686,15 +686,16 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
   bool armed = _armed_item == id * 16 + i && millis() - _stop_armed < CONFIRM_MS;
   switch (id) {
     case 0: {
-      static const char* const N[11] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Hasła repeaterów", "Restart", "Wyłącz" };
+      static const char* const N[12] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Odtwórz kontakty", "Hasła repeaterów", "Restart", "Wyłącz" };
       strcpy(L, N[i]);
       if (i == 0) strcpy(V, mapper.isRunning() ? "WŁ" : "STOP");
       if (i == 1) strcpy(V, isBluetoothEnabled() ? (hasConnection() ? "połącz." : "WŁ") : "WYŁ");
       if (i == 2) strcpy(V, the_mesh.mpRadioIsSF6() ? "SF6" : "inne!");
       if (i == 3) strcpy(V, _prefs->gps_enabled ? "WŁ" : "WYŁ");
       if (i == 5) strcpy(V, TO_LABEL[_timeout_idx & 3]);
-      if (i == 8) { if (armed) strcpy(V, "usuń?"); else snprintf(V, 8, "%d", pwCount()); }
-      if ((i == 9 || i == 10) && armed) strcpy(V, "OK?");
+      if (i == 8 && armed) strcpy(V, "OK?");
+      if (i == 9) { if (armed) strcpy(V, "usuń?"); else snprintf(V, 8, "%d", pwCount()); }
+      if ((i == 10 || i == 11) && armed) strcpy(V, "OK?");
       break;
     }
     case 1: {
@@ -855,9 +856,18 @@ void UITask::menuAction(int dir) {
         _lines_top = 0; _lines_back = SCR_HOME; _screen = SCR_LINES;
         return;
       }
-      if (i == 8) { if (!pwCount()) { popup("Brak zapamiętanych haseł"); return; } if (!armed) { arm(); return; } pwClear(); _armed_item = -1; popup("Hasła usunięte"); return; }
-      if (i == 9) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
-      if (i == 10) {
+      if (i == 8) {                                // kontakty z kopii ostatnich advertow
+        if (!armed) { arm(); return; }
+        _armed_item = -1;
+        int n = the_mesh.uiRestoreContacts();
+        buildContacts(); buildRpts();
+        char b[32]; snprintf(b, sizeof(b), "dodano: %d", n < 0 ? 0 : n);
+        popup(n < 0 ? "Brak kopii advertów" : "Kontakty odtworzone", b);
+        return;
+      }
+      if (i == 9) { if (!pwCount()) { popup("Brak zapamiętanych haseł"); return; } if (!armed) { arm(); return; } pwClear(); _armed_item = -1; popup("Hasła usunięte"); return; }
+      if (i == 10) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
+      if (i == 11) {
         if (!armed) { arm(); return; }
         popup("Wyłączanie..."); render(); delay(600);
         if (_display) _display->turnOff();
