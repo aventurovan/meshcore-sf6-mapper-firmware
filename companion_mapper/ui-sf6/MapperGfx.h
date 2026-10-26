@@ -10,8 +10,8 @@
 class MapperGfx {
   DisplayDriver* _d;
   void glyphCols(const uint8_t* cols, int x, int y, int scale);
-  static const uint8_t* glyphFor(uint32_t cp, uint8_t* accent);
 public:
+  static const uint8_t* glyphFor(uint32_t cp, uint8_t* accent);   // NULL = znak spoza czcionki
   MapperGfx() : _d(NULL) { }
   void attach(DisplayDriver* d) { _d = d; }
   DisplayDriver* drv() { return _d; }

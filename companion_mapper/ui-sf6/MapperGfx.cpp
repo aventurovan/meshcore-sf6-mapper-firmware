@@ -10,8 +10,8 @@ uint32_t mapperUtf8Next(const char*& p) {
   if ((c & 0xF0) == 0xE0 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
     p += 3; return ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
   }
-  if ((c & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) { p += 4; return '?'; }
-  p += 1; return '?';
+  if ((c & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) { p += 4; return 0; }   // emotki itp.: pomijane
+  p += 1; return 0;
 }
 
 const uint8_t* MapperGfx::glyphFor(uint32_t cp, uint8_t* accent) {
@@ -20,7 +20,7 @@ const uint8_t* MapperGfx::glyphFor(uint32_t cp, uint8_t* accent) {
   for (int i = 0; i < MAPPER_FONT_EXTRA; i++) {
     if (MAPPER_FONT_EXTRA_CP[i] == cp) { *accent = MAPPER_FONT_ACCENT[i]; return MAPPER_FONT_EXTRA_GLYPH[i]; }
   }
-  return MAPPER_FONT_ASCII['?' - 32];
+  return NULL;                                      // znak spoza czcionki (np. emotka): nie rysujemy
 }
 
 void MapperGfx::color(bool on) {
@@ -54,6 +54,7 @@ int MapperGfx::text(int x, int y, const char* s, int scale) {
     uint32_t cp = mapperUtf8Next(p);
     uint8_t accent;
     const uint8_t* g = glyphFor(cp, &accent);
+    if (!g) continue;
     glyphCols(g, x, y, scale);
     if (accent == 1) { _d->fillRect(x + 2 * scale, y - scale, 2 * scale, scale); }       // kreska nad wielka litera
     else if (accent == 2) { _d->fillRect(x + 2 * scale, y - scale, scale, scale); }      // kropka
@@ -65,7 +66,8 @@ int MapperGfx::text(int x, int y, const char* s, int scale) {
 int MapperGfx::textWidth(const char* s, int scale) const {
   int n = 0;
   const char* p = s;
-  while (*p) { mapperUtf8Next(p); n++; }
+  uint8_t a;
+  while (*p) { if (glyphFor(mapperUtf8Next(p), &a)) n++; }
   return n * 6 * scale;
 }
 
@@ -87,9 +89,10 @@ void MapperGfx::fit(char* dest, size_t dsz, const char* s, int max_w) {
   int n = 0;
   while (*p && n < max_chars) {
     const char* q = p;
-    mapperUtf8Next(q);
+    uint8_t a;
+    bool vis = glyphFor(mapperUtf8Next(q), &a) != NULL;
     if ((size_t)(q - s) >= dsz) break;
-    p = q; n++;
+    p = q; if (vis) n++;
   }
   size_t len = p - s;
   memcpy(dest, s, len);

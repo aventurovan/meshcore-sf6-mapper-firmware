@@ -113,6 +113,7 @@ public:
 
   // interfejs ekranu MC SF6 (ui-sf6)
   void uiSetRadioSF6();
+  void uiSetRadio(float freq, float bw, uint8_t sf, uint8_t cr);
   void uiSetTxPower(int8_t dbm);
   int  uiMaxTxPower() const { return MAX_LORA_TX_POWER; }
   bool uiAdvertFlood();

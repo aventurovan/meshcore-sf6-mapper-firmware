@@ -2243,7 +2243,10 @@ bool MyMesh::mpRadioIsSF6() {            // preset SF6 sieci MeshCore Poludnie: 
 }
 uint16_t MyMesh::mpBattMv() { return board.getBattMilliVolts(); }
 void MyMesh::uiSetRadioSF6() {           // preset sieci MeshCore Poludnie
-  _prefs.freq = 869.618f; _prefs.bw = 62.5f; _prefs.sf = 6; _prefs.cr = 5;
+  uiSetRadio(869.618f, 62.5f, 6, 5);
+}
+void MyMesh::uiSetRadio(float freq, float bw, uint8_t sf, uint8_t cr) {
+  _prefs.freq = freq; _prefs.bw = bw; _prefs.sf = sf; _prefs.cr = cr;
   savePrefs();
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 }

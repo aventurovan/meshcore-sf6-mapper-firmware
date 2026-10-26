@@ -152,9 +152,11 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
     pokazuje ostatnie repeatery z nazwami i SNR) → **Repeatery** (słyszane repeatery według odległości, szczegóły:
     klucz, odległość i kierunek, pozycja, ostatni advert) → **Ustawienia**;
   - **Ustawienia:** Mapper (mapowanie, ping co, dźwięk, nowa sesja), Bluetooth (wł./wył., PIN), Radio (preset SF6
-    jednym kliknięciem, moc nadawania), GPS (wł./wył., pozycja w advercie), Advert (do sąsiadów / do całej sieci),
+    jednym kliknięciem, moc nadawania, własne ustawienia: częstotliwość edytowana cyfra po cyfrze, szerokość BW, SF, CR —
+    zapisywane dopiero przez „Zastosuj”; domyślnie po pierwszym uruchomieniu jest preset SF6), GPS (wł./wył., pozycja w advercie), Advert (do sąsiadów / do całej sieci),
     Ekran (wygaszanie 15/30/60 s/nigdy, blokada, budzenie przy wiadomości), Dźwięk (wiadomości, mapper),
-    Informacje, Restart, Wyłącz;
+    Informacje (przewijane góra/dół), Restart, Wyłącz;
+  - **emotki w nazwach** (urządzenia, repeaterów, wątków) są pomijane — ekran pokazuje tylko litery, cyfry i znaki;
   - **nowa wiadomość:** okienko z nadawcą i początkiem treści, dźwięk. OK otwiera wiadomość;
   - **sterowanie:** góra/dół przewija listy, OK wybiera, wstecz cofa, przytrzymanie wstecz wraca na Start.
 - **Skróty przycisku OK (Wio):**

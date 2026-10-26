@@ -39,7 +39,7 @@ private:
   MapperGfx _g;
 
   // ekrany
-  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT };
+  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT, SCR_FREQ };
   enum Page { P_START, P_MSGS, P_MAPPER, P_RPT, P_SET, P_COUNT };
   uint8_t _screen = SCR_SPLASH, _page = P_START;
   unsigned long _splash_at = 0;
@@ -54,7 +54,13 @@ private:
   bool _mapper_list = false;        // ekran Mappera: false = stan, true = ostatnie RPT
   unsigned long _stop_armed = 0;    // potwierdzenie STOP / restart / wylacz
   int _armed_item = -1;
-  char _lines[8][32]; int _nlines = 0; char _lines_title[24];
+  char _lines[8][32]; int _nlines = 0, _lines_top = 0; char _lines_title[24];
+  // radio: zmiany przygotowywane w menu, zapisywane dopiero przez „Zastosuj”
+  uint32_t _rf_khz = 869618; float _rbw = 62.5f; uint8_t _rsf = 6, _rcr = 5;
+  char _fdig[7]; int _fcur = 0;
+  void radioLoad();
+  bool radioChanged();
+  void drawFreq();
 
   // wiadomosci
   UiMsg _msgs[UI_MSG_MAX]; int _msg_n = 0;

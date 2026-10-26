@@ -10,7 +10,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.2.0"
+#define UI_VERSION       "1.2.1"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -62,6 +62,20 @@ static void fmtAgo(char* d, int sz, uint32_t ts) {
 static void fmtSnr(char* d, int sz, int8_t x4) {
   int t = (int)x4 * 10 / 4;
   snprintf(d, sz, "%s%d,%d", t < 0 ? "-" : "+", abs(t) / 10, abs(t) % 10);
+}
+// tylko znaki, ktore umie czcionka (bez emotek), bez spacji na koncu
+static void cleanText(char* d, int dsz, const char* s) {
+  int n = 0;
+  const char* p = s;
+  while (*p && n < dsz - 4) {
+    const char* q = p;
+    uint8_t a;
+    uint32_t cp = mapperUtf8Next(q);
+    if (MapperGfx::glyphFor(cp, &a)) { int len = (int)(q - p); memcpy(d + n, p, len); n += len; }
+    p = q;
+  }
+  while (n > 0 && d[n - 1] == ' ') n--;
+  d[n] = 0;
 }
 static void fmtDist(char* d, int sz, int32_t m) {
   if (m < 0) snprintf(d, sz, "-");
@@ -409,8 +423,23 @@ void UITask::key(char k) {
       else if (k == 'B' || k == 'L') { _screen = SCR_HOME; _page = P_MSGS; }
       break;
     }
-    case SCR_LINES: case SCR_RPT:
+    case SCR_LINES:
+      if (k == 'D' && _lines_top + 4 < _nlines) _lines_top++;
+      else if (k == 'U' && _lines_top > 0) _lines_top--;
+      else if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
+      break;
+    case SCR_RPT:
       if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
+      break;
+    case SCR_FREQ:
+      if (k == 'U' || k == 'D') { int d = _fdig[_fcur] - '0'; d = (d + (k == 'U' ? 1 : 9)) % 10; _fdig[_fcur] = '0' + d; }
+      else if (k == 'L') { if (_fcur > 0) _fcur--; }
+      else if (k == 'R') { if (_fcur < 5) _fcur++; }
+      else if (k == 'O') {
+        uint32_t f = (uint32_t) atol(_fdig);
+        if (f < 137000 || f > 1020000) popup("Zła częstotliwość", "137–1020 MHz");
+        else { _rf_khz = f; _screen = SCR_MENU; }
+      } else if (k == 'B') _screen = SCR_MENU;
       break;
   }
 }
@@ -496,12 +525,15 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
       break;
     }
     case 3: {
-      static const char* const N[4] = { "Ustaw preset SF6", "Moc nadawania", "Częstotliwość", "SF / BW" };
+      static const char* const N[7] = { "Preset SF6", "Moc nadawania", "Częstotliwość", "Szerokość BW", "SF", "CR", "Zastosuj" };
       strcpy(L, N[i]);
-      if (i == 0) strcpy(V, the_mesh.mpRadioIsSF6() ? "jest" : "");
+      if (i == 0) strcpy(V, the_mesh.mpRadioIsSF6() ? "aktywny" : "ustaw");
       if (i == 1) snprintf(V, 12, "%d dBm", (int)_prefs->tx_power_dbm);
-      if (i == 2) { int f = (int)(_prefs->freq * 1000 + 0.5f); snprintf(V, 12, "%d,%03d", f / 1000, f % 1000); }
-      if (i == 3) { int b = (int)(_prefs->bw * 10 + 0.5f); snprintf(V, 14, "SF%d %d,%d", _prefs->sf, b / 10, b % 10); }
+      if (i == 2) snprintf(V, 12, "%lu,%03lu", (unsigned long)(_rf_khz / 1000), (unsigned long)(_rf_khz % 1000));
+      if (i == 3) { int b = (int)(_rbw * 10 + 0.5f); if (b % 10) snprintf(V, 14, "%d,%d", b / 10, b % 10); else snprintf(V, 14, "%d", b / 10); }
+      if (i == 4) snprintf(V, 8, "%d", _rsf);
+      if (i == 5) snprintf(V, 8, "4/%d", _rcr);
+      if (i == 6) strcpy(V, armed ? "OK?" : radioChanged() ? "zmiany!" : "");
       break;
     }
     case 4: {
@@ -536,13 +568,21 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
   }
 }
 
-void UITask::openMenu(int id) { _menu = id; _msel[id] = 0; _screen = SCR_MENU; _armed_item = -1; }
+void UITask::openMenu(int id) { _menu = id; _msel[id] = 0; _screen = SCR_MENU; _armed_item = -1; if (id == 3) radioLoad(); }
+
+static const float BWS[] = { 7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f };
+void UITask::radioLoad() {
+  _rf_khz = (uint32_t)(_prefs->freq * 1000.0f + 0.5f); _rbw = _prefs->bw; _rsf = _prefs->sf; _rcr = _prefs->cr;
+}
+bool UITask::radioChanged() {
+  return _rf_khz != (uint32_t)(_prefs->freq * 1000.0f + 0.5f) || fabsf(_rbw - _prefs->bw) > 0.05f || _rsf != _prefs->sf || _rcr != _prefs->cr;
+}
 
 void UITask::menuKey(char k) {
   int n = menuCount(_menu), &s = _msel[_menu];
   if (k == 'U' || k == 'D') { s = (s + (k == 'D' ? 1 : n - 1)) % n; _armed_item = -1; return; }
   if (k == 'B') { _screen = SCR_HOME; _page = P_SET; return; }
-  bool cycle = (_menu == 1 && s == 1) || (_menu == 3 && s == 1) || (_menu == 6 && s == 0);
+  bool cycle = (_menu == 1 && s == 1) || (_menu == 3 && (s == 1 || (s >= 3 && s <= 5))) || (_menu == 6 && s == 0);
   if (k == 'L') { if (cycle) menuAction(-1); else { _screen = SCR_HOME; _page = P_SET; } return; }
   if (k == 'O' || k == 'R') menuAction(+1);
 }
@@ -559,17 +599,18 @@ void UITask::menuAction(int dir) {
       if (i == 7) {                               // Informacje
         char b[32];
         _nlines = 0; strcpy(_lines_title, "Informacje");
-        snprintf(_lines[_nlines++], 32, "%s", _prefs->node_name);
+        cleanText(_lines[_nlines++], 32, _prefs->node_name);
         const uint8_t* k = the_mesh.mpPubKey();
-        snprintf(_lines[_nlines++], 32, "klucz %02X%02X%02X%02X…", k[0], k[1], k[2], k[3]);
-        snprintf(_lines[_nlines++], 32, "MC SF6 %s (%s)", UI_VERSION, FIRMWARE_VERSION);
+        snprintf(_lines[_nlines++], 32, "klucz %02X%02X%02X%02X%02X%02X", k[0], k[1], k[2], k[3], k[4], k[5]);
+        snprintf(_lines[_nlines++], 32, "MC SF6 %s", UI_VERSION);
+        snprintf(_lines[_nlines++], 32, "MeshCore %s", FIRMWARE_VERSION);
         snprintf(_lines[_nlines++], 32, "kontakty %d/%d", the_mesh.getNumContacts(), MAX_CONTACTS);
         uint16_t mv = getBattMilliVolts();
         snprintf(_lines[_nlines++], 32, "bateria %d,%02d V %d%%", mv / 1000, (mv % 1000) / 10, battPct(mv));
         MapperView v; mapper.getView(v);
         snprintf(b, sizeof(b), "mapper: do wysł. %lu", (unsigned long) v.pending);
         strcpy(_lines[_nlines++], b);
-        _screen = SCR_LINES;
+        _lines_top = 0; _screen = SCR_LINES;
         return;
       }
       if (i == 8) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
@@ -594,7 +635,18 @@ void UITask::menuAction(int dir) {
       if (i == 0) { if (isBluetoothEnabled()) disableBluetooth(); else enableBluetooth(); popup(isBluetoothEnabled() ? "Bluetooth WŁ" : "Bluetooth WYŁ"); }
       return;
     case 3:
-      if (i == 0) { the_mesh.uiSetRadioSF6(); popup("Radio: preset SF6", "869,618 · SF6 · 62,5"); }
+      if (i == 0) { the_mesh.uiSetRadioSF6(); radioLoad(); popup("Radio: preset SF6", "869,618 · SF6 · 62,5"); }
+      if (i == 2) { snprintf(_fdig, sizeof(_fdig), "%06lu", (unsigned long) _rf_khz); _fcur = 3; _screen = SCR_FREQ; }
+      if (i == 3) { int n = sizeof(BWS) / sizeof(BWS[0]), k = 0; while (k < n && fabsf(BWS[k] - _rbw) > 0.05f) k++; k = (k >= n ? 6 : k + dir + n) % n; _rbw = BWS[k]; }
+      if (i == 4) { int v = _rsf + dir; if (v > 12) v = 5; if (v < 5) v = 12; _rsf = v; }
+      if (i == 5) { int v = _rcr + dir; if (v > 8) v = 5; if (v < 5) v = 8; _rcr = v; }
+      if (i == 6) {
+        if (!radioChanged()) { popup("Brak zmian"); return; }
+        if (!armed) { arm(); return; }
+        the_mesh.uiSetRadio(_rf_khz / 1000.0f, _rbw, _rsf, _rcr); _armed_item = -1;
+        bool sf6 = the_mesh.mpRadioIsSF6();
+        popup("Radio ustawione", sf6 ? "preset SF6" : "UWAGA: to nie SF6", sf6 ? NULL : "mapper nie pinguje");
+      }
       if (i == 1) {
         int cur = _prefs->tx_power_dbm, n = sizeof(TXP), k = 0;
         while (k < n && TXP[k] < cur) k++;
@@ -655,6 +707,7 @@ void UITask::render() {
     case SCR_MENU: drawMenu(); break;
     case SCR_LINES: drawLines(); break;
     case SCR_RPT: drawRptDetail(); break;
+    case SCR_FREQ: drawFreq(); break;
   }
   if (_pop_until > millis()) drawPopup();
   _display->endFrame();
@@ -697,8 +750,9 @@ static void titleRow(MapperGfx& g, const char* t, const char* right) {
 }
 
 void UITask::drawStart() {
-  char b[40];
-  _g.textCenter(64, 12, _prefs->node_name);
+  char b[40], nm[32];
+  cleanText(nm, sizeof(nm), _prefs->node_name);
+  _g.textCenter(64, 12, nm);
   fmtHM(b, sizeof(b), rtc_clock.getCurrentTime());
   _g.textCenter(64, 22, b, 2);
   int un = unreadCount();
@@ -857,10 +911,21 @@ void UITask::drawMenu() {
   }
 }
 
-void UITask::drawLines() {
-  titleRow(_g, _lines_title, NULL);
-  for (int i = 0; i < _nlines && i < 4; i++) _g.text(0, 24 + i * 10, _lines[i]);
-  if (_nlines > 4) { for (int i = 4; i < _nlines && i < 5; i++) _g.text(0, 54, _lines[i]); }
+void UITask::drawLines() {                       // 4 linie, gora/dol przewija
+  char pg[12] = "";
+  if (_nlines > 4) snprintf(pg, sizeof(pg), "%d/%d", _lines_top + 1, _nlines - 3);
+  titleRow(_g, _lines_title, pg);
+  for (int r = 0; r < 4 && _lines_top + r < _nlines; r++) _g.text(0, 24 + r * 10, _lines[_lines_top + r]);
+}
+
+void UITask::drawFreq() {                        // edycja czestotliwosci cyfra po cyfrze
+  titleRow(_g, "Częstotliwość", "MHz");
+  char s[12]; snprintf(s, sizeof(s), "%c%c%c,%c%c%c", _fdig[0], _fdig[1], _fdig[2], _fdig[3], _fdig[4], _fdig[5]);
+  const int x0 = 64 - _g.textWidth(s, 2) / 2;
+  _g.text(x0, 27, s, 2);
+  int pos = _fcur < 3 ? _fcur : _fcur + 1;          // przecinek zajmuje jedno miejsce
+  _g.rect(x0 + pos * 12, 45, 10, 2);
+  _g.text(0, 54, "góra/dół: cyfra  OK");
 }
 
 void UITask::drawPopup() {
@@ -891,6 +956,6 @@ void UITask::drawSplash(unsigned long t) {
     unsigned long tw = t - 300;
     for (int k = 0; k < 3; k++) { int r = (int)((tw / 45 + k * 6) % 15) + 3; _g.arcTop(cx, cy, r, 29); }
   }
-  if (t >= 600 && _prefs) _g.textCenter(64, 46, _prefs->node_name);
+  if (t >= 600 && _prefs) { char nm[32]; cleanText(nm, sizeof(nm), _prefs->node_name); _g.textCenter(64, 46, nm); }
   if (t >= 900) _g.textRight(127, 56, "v" UI_VERSION);
 }
