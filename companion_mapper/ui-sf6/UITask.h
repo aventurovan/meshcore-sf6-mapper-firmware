@@ -116,7 +116,7 @@ private:
   void statusBar();
   void drawSplash(unsigned long t);
   void drawStart();
-  uint8_t _start_card = 0; unsigned long _start_manual = 0;   // karty Startu: zmiana co 10 s, gora/dol recznie
+  uint32_t _beat_hits = 0; unsigned long _beat_at = 0;      // „bicie serca” na Starcie przy odpowiedzi repeatera
   void drawMsgs();
   void drawThread();
   void drawMapper();
