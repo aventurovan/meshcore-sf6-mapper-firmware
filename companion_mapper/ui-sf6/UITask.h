@@ -1,0 +1,121 @@
+#pragma once
+/*
+ * Interfejs ekranu „MC SF6” dla Wio Tracker L1: Companion MeshCore + SF6 Mapper.
+ * Karuzela ekranow (joystick lewo/prawo): Start, Wiadomosci, Mapper, Repeatery, Ustawienia.
+ * Wszystko po polsku (wlasna czcionka z polskimi literami), skroty OK:
+ *   przytrzymanie 2 s = odblokowanie, 2x = mapper WL, 3x = mapper STOP, przytrzymanie 8 s = SOS na kanal Public.
+ */
+#include "../AbstractUITask.h"
+#include "../NodePrefs.h"
+#include <helpers/SensorManager.h>
+#include <helpers/ui/DisplayDriver.h>
+#include "MapperGfx.h"
+
+#define UI_MSG_MAX     32
+#define UI_THREAD_MAX  12
+#define UI_RPT_MAX     40
+
+struct UiMsg {
+  uint32_t ts;
+  char thread[24];          // nadawca (wiadomosc prywatna) albo nazwa kanalu
+  char text[150];
+  bool chan, unread, mine;
+};
+
+class UITask : public AbstractUITask {
+public:
+  UITask(mesh::MainBoard* board, MultiSerialInterface* im) : AbstractUITask(board, im) { }
+  void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
+  void msgRead(int msgcount) override;
+  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
+  void notify(UIEventType t = UIEventType::none) override;
+  void loop() override;
+  void mapperBeep();
+
+private:
+  DisplayDriver* _display = NULL;
+  SensorManager* _sensors = NULL;
+  NodePrefs* _prefs = NULL;
+  MapperGfx _g;
+
+  // ekrany
+  enum Screen { SCR_SPLASH, SCR_HOME, SCR_THREAD, SCR_MENU, SCR_LINES, SCR_RPT };
+  enum Page { P_START, P_MSGS, P_MAPPER, P_RPT, P_SET, P_COUNT };
+  uint8_t _screen = SCR_SPLASH, _page = P_START;
+  unsigned long _splash_at = 0;
+  bool _dirty = true;
+  unsigned long _next_render = 0;
+
+  // listy / menu
+  int _sel = 0, _top = 0;           // zaznaczenie na aktualnej liscie
+  int _menu = 0;                    // id podmenu (SCR_MENU)
+  int _msel[8] = {0};               // zapamietane zaznaczenie w menu
+  int _thread_sel = 0, _thread_msg = 0, _thread_line = 0;
+  bool _mapper_list = false;        // ekran Mappera: false = stan, true = ostatnie RPT
+  unsigned long _stop_armed = 0;    // potwierdzenie STOP / restart / wylacz
+  int _armed_item = -1;
+  char _lines[8][32]; int _nlines = 0; char _lines_title[24];
+
+  // wiadomosci
+  UiMsg _msgs[UI_MSG_MAX]; int _msg_n = 0;
+  char _threads[UI_THREAD_MAX][24]; int _thread_n = 0;
+  void buildThreads();
+  int  unreadCount(const char* thread = NULL);
+  void addMsg(const char* thread, const char* text, bool chan, bool mine);
+
+  // repeatery
+  struct Rpt { char name[24]; uint8_t prefix[4]; int32_t dist_m; uint32_t last; int32_t lat, lon; };
+  Rpt _rpts[UI_RPT_MAX]; int _rpt_n = 0; unsigned long _rpt_at = 0;
+  void buildRpts();
+  bool rptName(const uint8_t* prefix2, char* dest, int dsz);
+
+  // ekran / blokada / ustawienia UI
+  bool _on = true, _locked = false;
+  unsigned long _last_input = 0;
+  uint8_t _timeout_idx = 1;         // 15 s / 30 s / 60 s / nigdy
+  bool _lock_en = true, _wake_msg = true;
+  void loadUiPrefs(); void saveUiPrefs();
+  void wake();
+  bool usbPowered();
+
+  // przycisk OK (wlasna obsluga: klikniecia, przytrzymania)
+  bool _ok_down = false, _ok_woke = false, _unlock_done = false, _sos_sent = false;
+  unsigned long _ok_t0 = 0, _click_t = 0;
+  int _clicks = 0;
+  void okLoop();
+  void okClicks(int n);
+  bool shortcutsHere() const { return _screen == SCR_HOME && (_page == P_START || _page == P_MAPPER); }
+
+  // okienka
+  char _pop1[32] = "", _pop2[32] = "", _pop3[32] = "";
+  unsigned long _pop_until = 0;
+  int _pop_pct = -1;
+  bool _pop_msg = false;            // okienko nowej wiadomosci (OK otwiera watek)
+  void popup(const char* l1, const char* l2 = NULL, const char* l3 = NULL, unsigned long ms = 1800);
+
+  // akcje
+  void key(char k);                 // 'L','R','U','D','O','B'
+  void homeKey(char k);
+  void menuKey(char k);
+  void menuAction(int dir);
+  void openMenu(int id);
+  void sendSOS();
+  void mapperSet(bool on);
+
+  // rysowanie
+  void render();
+  void statusBar();
+  void drawSplash(unsigned long t);
+  void drawStart();
+  void drawMsgs();
+  void drawThread();
+  void drawMapper();
+  void drawRpts();
+  void drawRptDetail();
+  void drawSettings();
+  void drawMenu();
+  void drawLines();
+  void drawPopup();
+  int  menuCount(int id);
+  void menuItem(int id, int i, char* label, char* value);
+};

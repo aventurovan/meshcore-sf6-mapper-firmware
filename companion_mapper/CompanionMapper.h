@@ -104,6 +104,7 @@ public:
   bool soundOn() const { return _sound; }
   void setSound(bool on) { _sound = on; saveSettings(); }
   const MapperRecent* recent() const { return _recent; }
+  void newSession() { _session++; _pings = 0; _hits = 0; _last_n = -1; memset(_recent, 0, sizeof(_recent)); saveSettings(); }
   void getView(MapperView& v);
 };
 

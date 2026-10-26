@@ -110,6 +110,13 @@ public:
   uint16_t mpBattMv() override;
   BaseSerialInterface* mpSerial() override { return _serial; }
   void mpSetGps(bool on) override;
+
+  // interfejs ekranu MC SF6 (ui-sf6)
+  void uiSetRadioSF6();
+  void uiSetTxPower(int8_t dbm);
+  int  uiMaxTxPower() const { return MAX_LORA_TX_POWER; }
+  bool uiAdvertFlood();
+  bool uiSendChannelText(int channel_idx, const char* text);
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

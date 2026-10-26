@@ -1,0 +1,896 @@
+#include "UITask.h"
+#include <target.h>
+#include <InternalFileSystem.h>
+#include <helpers/ui/MomentaryButton.h>
+#include <helpers/AdvertDataHelpers.h>
+#include "../MyMesh.h"
+#include "../CompanionMapper.h"
+#ifdef PIN_BUZZER
+  #include <helpers/ui/buzzer.h>
+  static genericBuzzer buzzer;
+#endif
+
+#define UI_VERSION       "1.2.0"
+#define UI_PREFS_FILE    "/sf6ui"
+#define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
+#define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
+#define OK_UNLOCK_MS     2000UL
+#define OK_SOS_SHOW_MS   5000UL
+#define OK_SOS_MS        8000UL
+#define CONFIRM_MS       4000UL
+#define ROWS             4
+#define ROW_H            10
+
+static MomentaryButton joy_up(JOYSTICK_UP, 1000, true, false, false);
+static MomentaryButton joy_down(JOYSTICK_DOWN, 1000, true, false, false);
+static UITask* g_ui = NULL;
+static bool beep_restore = false;
+
+void mapperUiHit() { if (g_ui) g_ui->mapperBeep(); }
+
+// ---------------- pomocnicze ----------------
+static int32_t daysFromCivil(int y, unsigned m, unsigned d) {
+  y -= m <= 2; const int32_t era = (y >= 0 ? y : y - 399) / 400; const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t) doe - 719468;
+}
+static uint32_t lastSunday(int y, unsigned m) {   // ostatnia niedziela miesiaca, 01:00 UTC
+  int32_t d = daysFromCivil(y, m, 31); int wd = (int)((d + 4) % 7); if (wd < 0) wd += 7;
+  return (uint32_t)(d - wd) * 86400UL + 3600UL;
+}
+static uint32_t localTime(uint32_t utc) {         // Polska: CET/CEST wg zasad UE
+  int32_t z = (int32_t)(utc / 86400UL) + 719468; const int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const unsigned doe = (unsigned)(z - era * 146097); const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int y = (int)(yoe + era * 400); const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100); const unsigned mp = (5 * doy + 2) / 153;
+  unsigned m = mp + (mp < 10 ? 3 : -9); y += (m <= 2);
+  return utc + ((utc >= lastSunday(y, 3) && utc < lastSunday(y, 10)) ? 7200UL : 3600UL);
+}
+static void fmtHM(char* d, int sz, uint32_t utc) {
+  if (utc < 1600000000UL) { snprintf(d, sz, "--:--"); return; }
+  uint32_t t = localTime(utc) % 86400UL;
+  snprintf(d, sz, "%02lu:%02lu", (unsigned long)(t / 3600), (unsigned long)((t / 60) % 60));
+}
+static void fmtAgo(char* d, int sz, uint32_t ts) {
+  uint32_t now = rtc_clock.getCurrentTime();
+  if (ts < 1600000000UL || now < ts) { snprintf(d, sz, "-"); return; }
+  uint32_t s = now - ts;
+  if (s < 90) snprintf(d, sz, "teraz");
+  else if (s < 3600) snprintf(d, sz, "%lu min", (unsigned long)(s / 60));
+  else if (s < 86400) snprintf(d, sz, "%lu h", (unsigned long)(s / 3600));
+  else snprintf(d, sz, "%lu dni", (unsigned long)(s / 86400));
+}
+static void fmtSnr(char* d, int sz, int8_t x4) {
+  int t = (int)x4 * 10 / 4;
+  snprintf(d, sz, "%s%d,%d", t < 0 ? "-" : "+", abs(t) / 10, abs(t) % 10);
+}
+static void fmtDist(char* d, int sz, int32_t m) {
+  if (m < 0) snprintf(d, sz, "-");
+  else if (m < 1000) snprintf(d, sz, "%ld m", (long)m);
+  else if (m < 10000) snprintf(d, sz, "%ld,%ld km", (long)(m / 1000), (long)((m % 1000) / 100));
+  else snprintf(d, sz, "%ld km", (long)((m + 500) / 1000));
+}
+static double distM(double la1, double lo1, double la2, double lo2) {
+  double a = la1 * DEG_TO_RAD, b = la2 * DEG_TO_RAD;
+  double x = (lo2 - lo1) * DEG_TO_RAD * cos((a + b) / 2), y = b - a;
+  return sqrt(x * x + y * y) * 6371000.0;
+}
+static int bearing(double la1, double lo1, double la2, double lo2) {
+  double y = sin((lo2 - lo1) * DEG_TO_RAD) * cos(la2 * DEG_TO_RAD);
+  double x = cos(la1 * DEG_TO_RAD) * sin(la2 * DEG_TO_RAD) - sin(la1 * DEG_TO_RAD) * cos(la2 * DEG_TO_RAD) * cos((lo2 - lo1) * DEG_TO_RAD);
+  int b = (int)(atan2(y, x) * RAD_TO_DEG); return (b + 360) % 360;
+}
+static const char* compass(int b) {
+  static const char* const N[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  return N[((b + 22) / 45) % 8];
+}
+static int battPct(uint16_t mv) {
+  if (mv >= 4150) return 100;
+  if (mv <= 3300) return 0;
+  return (int)((mv - 3300) * 100UL / 850);
+}
+// zawijanie tekstu UTF-8 po slowach do linii o szerokosci max_w px (6 px na znak)
+static int wrapText(const char* s, char out[][32], int max_lines, int max_chars) {
+  int n = 0;
+  while (*s && n < max_lines) {
+    while (*s == ' ') s++;
+    const char* p = s; const char* brk = NULL; int chars = 0;
+    while (*p && *p != '\n' && chars < max_chars) {
+      const char* q = p; mapperUtf8Next(q);
+      if (*p == ' ') brk = p;
+      p = q; chars++;
+    }
+    const char* end = (*p && *p != '\n' && brk && chars >= max_chars) ? brk : p;
+    int len = (int)(end - s); if (len > 31) len = 31;
+    memcpy(out[n], s, len); out[n][len] = 0; n++;
+    s = end; if (*s == '\n') s++;
+  }
+  return n;
+}
+
+// ---------------- start ----------------
+void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
+  g_ui = this;
+  _display = display; _sensors = sensors; _prefs = node_prefs;
+  _g.attach(display);
+  joy_up.begin(); joy_down.begin();
+  user_btn.begin(); joystick_left.begin(); joystick_right.begin(); back_btn.begin();
+#ifdef PIN_BUZZER
+  buzzer.begin();
+  buzzer.quiet(_prefs->buzzer_quiet);
+#endif
+  loadUiPrefs();
+  _screen = SCR_SPLASH; _splash_at = millis(); _last_input = millis();
+  if (_display) _display->turnOn();
+}
+
+void UITask::loadUiPrefs() {
+  File f = InternalFS.open(UI_PREFS_FILE, FILE_O_READ);
+  if (!f) return;
+  uint8_t b[4];
+  if (f.read(b, 4) == 4 && b[0] == 0x5A) { _timeout_idx = b[1] <= 3 ? b[1] : 1; _lock_en = b[2] != 0; _wake_msg = b[3] != 0; }
+  f.close();
+}
+void UITask::saveUiPrefs() {
+  uint8_t b[4] = { 0x5A, _timeout_idx, (uint8_t)(_lock_en ? 1 : 0), (uint8_t)(_wake_msg ? 1 : 0) };
+  InternalFS.remove(UI_PREFS_FILE);
+  File f = InternalFS.open(UI_PREFS_FILE, FILE_O_WRITE);
+  if (!f) return;
+  f.write(b, 4); f.close();
+}
+
+bool UITask::usbPowered() { return _board->isExternalPowered(); }
+
+void UITask::wake() {
+  _last_input = millis();
+  if (_display && !_on) { _display->turnOn(); _on = true; }
+  _dirty = true;
+}
+
+void UITask::popup(const char* l1, const char* l2, const char* l3, unsigned long ms) {
+  strncpy(_pop1, l1 ? l1 : "", sizeof(_pop1) - 1); _pop1[sizeof(_pop1) - 1] = 0;
+  strncpy(_pop2, l2 ? l2 : "", sizeof(_pop2) - 1); _pop2[sizeof(_pop2) - 1] = 0;
+  strncpy(_pop3, l3 ? l3 : "", sizeof(_pop3) - 1); _pop3[sizeof(_pop3) - 1] = 0;
+  _pop_until = millis() + ms; _pop_pct = -1; _pop_msg = false;
+  _dirty = true;
+}
+
+void UITask::mapperBeep() {
+#ifdef PIN_BUZZER
+  if (buzzer.isPlaying()) return;
+  if (buzzer.isQuiet()) { buzzer.quiet(false); beep_restore = true; }
+  buzzer.play("hit:d=16,o=6,b=180:c,e");
+#endif
+}
+
+// ---------------- wiadomosci ----------------
+void UITask::addMsg(const char* thread, const char* text, bool chan, bool mine) {
+  if (_msg_n == UI_MSG_MAX) { memmove(&_msgs[0], &_msgs[1], sizeof(UiMsg) * (UI_MSG_MAX - 1)); _msg_n--; }
+  UiMsg& m = _msgs[_msg_n++];
+  m.ts = rtc_clock.getCurrentTime();
+  strncpy(m.thread, thread, sizeof(m.thread) - 1); m.thread[sizeof(m.thread) - 1] = 0;
+  strncpy(m.text, text, sizeof(m.text) - 1); m.text[sizeof(m.text) - 1] = 0;
+  m.chan = chan; m.unread = !mine; m.mine = mine;
+  buildThreads();
+}
+
+void UITask::buildThreads() {               // watki od najnowszego
+  _thread_n = 0;
+  for (int i = _msg_n - 1; i >= 0 && _thread_n < UI_THREAD_MAX; i--) {
+    bool seen = false;
+    for (int k = 0; k < _thread_n; k++) if (strcmp(_threads[k], _msgs[i].thread) == 0) { seen = true; break; }
+    if (!seen) { strcpy(_threads[_thread_n++], _msgs[i].thread); }
+  }
+}
+
+int UITask::unreadCount(const char* thread) {
+  int n = 0;
+  for (int i = 0; i < _msg_n; i++) if (_msgs[i].unread && (!thread || strcmp(_msgs[i].thread, thread) == 0)) n++;
+  return n;
+}
+
+void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
+  bool chan = false;                         // kanal czy wiadomosc prywatna
+  ChannelDetails cd;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (!the_mesh.getChannel(i, cd)) break;
+    if (cd.name[0] && strcmp(cd.name, from_name) == 0) { chan = true; break; }
+  }
+  addMsg(from_name, text, chan, false);
+  if (_wake_msg) wake();
+  char l1[32], l2[32];
+  snprintf(l1, sizeof(l1), "> %s", from_name);
+  MapperGfx::fit(l2, sizeof(l2), text, 112);
+  popup(l1, l2, NULL, 6000);
+  _pop_msg = true;
+#ifdef PIN_BUZZER
+  if (!_prefs->buzzer_quiet && !buzzer.isPlaying()) buzzer.play(chan ? "ch:d=16,o=6,b=200:e" : "dm:d=16,o=6,b=200:e,g,c7");
+#endif
+}
+
+void UITask::msgRead(int msgcount) {
+  if (msgcount == 0) { for (int i = 0; i < _msg_n; i++) _msgs[i].unread = false; _dirty = true; }
+}
+
+void UITask::notify(UIEventType t) { _dirty = true; }
+
+// ---------------- repeatery ----------------
+void UITask::buildRpts() {
+  _rpt_n = 0; _rpt_at = millis();
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  bool have = l && l->isValid();
+  double mla = have ? l->getLatitude() / 1e6 : 0, mlo = have ? l->getLongitude() / 1e6 : 0;
+  ContactInfo c;
+  int total = the_mesh.getNumContacts();
+  for (int i = 0; i < total; i++) {
+    if (!the_mesh.getContactByIdx(i, c) || c.type != ADV_TYPE_REPEATER) continue;
+    Rpt r;
+    strncpy(r.name, c.name, sizeof(r.name) - 1); r.name[sizeof(r.name) - 1] = 0;
+    memcpy(r.prefix, c.id.pub_key, 4);
+    r.last = c.last_advert_timestamp; r.lat = c.gps_lat; r.lon = c.gps_lon;
+    r.dist_m = (have && (c.gps_lat || c.gps_lon)) ? (int32_t) distM(mla, mlo, c.gps_lat / 1e6, c.gps_lon / 1e6) : -1;
+    // wstawianie: najpierw po odleglosci, bez pozycji na koncu (po czasie)
+    int pos = _rpt_n;
+    while (pos > 0) {
+      Rpt& p = _rpts[pos - 1];
+      bool before = (r.dist_m >= 0 && (p.dist_m < 0 || r.dist_m < p.dist_m)) || (r.dist_m < 0 && p.dist_m < 0 && r.last > p.last);
+      if (!before) break;
+      pos--;
+    }
+    if (pos >= UI_RPT_MAX) continue;
+    int last = _rpt_n < UI_RPT_MAX ? _rpt_n : UI_RPT_MAX - 1;
+    for (int k = last; k > pos; k--) _rpts[k] = _rpts[k - 1];
+    _rpts[pos] = r;
+    if (_rpt_n < UI_RPT_MAX) _rpt_n++;
+  }
+}
+
+bool UITask::rptName(const uint8_t* p2, char* dest, int dsz) {
+  ContactInfo c;
+  int total = the_mesh.getNumContacts();
+  for (int i = 0; i < total; i++) {
+    if (!the_mesh.getContactByIdx(i, c) || c.type != ADV_TYPE_REPEATER) continue;
+    if (c.id.pub_key[0] == p2[0] && c.id.pub_key[1] == p2[1]) { strncpy(dest, c.name, dsz - 1); dest[dsz - 1] = 0; return true; }
+  }
+  snprintf(dest, dsz, "#%02X%02X", p2[0], p2[1]);
+  return false;
+}
+
+// ---------------- akcje ----------------
+void UITask::mapperSet(bool on) {
+  if (mapper.isRunning() == on) { popup(on ? "Mapper już działa" : "Mapper już stoi"); return; }
+  mapper.setRunning(on);
+  popup(on ? "Mapper WŁĄCZONY" : "Mapper ZATRZYMANY", on ? "GPS włączony" : "GPS wyłączony");
+#ifdef PIN_BUZZER
+  if (!buzzer.isPlaying()) { if (buzzer.isQuiet()) { buzzer.quiet(false); beep_restore = true; } buzzer.play(on ? "on:d=16,o=6,b=200:c,g" : "off:d=16,o=6,b=200:g,c"); }
+#endif
+}
+
+void UITask::sendSOS() {
+  char msg[150], pos[48];
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  double la = 0, lo = 0; bool have = false, old = false;
+  if (l && l->isValid()) { la = l->getLatitude() / 1e6; lo = l->getLongitude() / 1e6; have = true; }
+  else if (sensors.node_lat != 0 || sensors.node_lon != 0) { la = sensors.node_lat; lo = sensors.node_lon; have = true; old = true; }
+  if (have) {
+    snprintf(pos, sizeof(pos), "%.5f,%.5f", la, lo);
+    snprintf(msg, sizeof(msg), "SOS! Potrzebuję pomocy. Pozycja%s: %s https://maps.google.com/?q=%s", old ? " (ostatnia znana)" : "", pos, pos);
+  } else {
+    snprintf(msg, sizeof(msg), "SOS! Potrzebuję pomocy. Brak pozycji GPS.");
+    strcpy(pos, "brak pozycji GPS");
+  }
+  bool ok = the_mesh.uiSendChannelText(0, msg);
+  if (ok) addMsg("Public", msg, true, true);
+  popup(ok ? "SOS WYSŁANY" : "SOS: błąd wysyłki", ok ? "kanał Public" : "brak kanału Public", pos, 8000);
+#ifdef PIN_BUZZER
+  if (buzzer.isQuiet()) { buzzer.quiet(false); beep_restore = true; }
+  buzzer.play("sos:d=8,o=6,b=180:a,a,a");
+#endif
+}
+
+void UITask::okClicks(int n) {
+  if (n >= 3) { mapperSet(false); return; }
+  if (n == 2) { mapperSet(true); return; }
+  key('O');
+}
+
+// przycisk OK: klikniecia (1/2/3), przytrzymanie 2 s (odblokowanie) i 8 s (SOS)
+void UITask::okLoop() {
+  bool down = user_btn.isPressed();
+  unsigned long now = millis();
+  if (down && !_ok_down) {
+    _ok_down = true; _ok_t0 = now; _unlock_done = false; _sos_sent = false;
+    _ok_woke = !_on;
+    wake();
+  }
+  if (down && _ok_down) {
+    unsigned long held = now - _ok_t0;
+    if (_locked && !_unlock_done) {
+      _pop_pct = (int)(held * 100 / OK_UNLOCK_MS); if (_pop_pct > 100) _pop_pct = 100;
+      if (_pop_until < now + 300) { strcpy(_pop1, "Zablokowane"); strcpy(_pop2, "trzymaj OK 2 s"); _pop3[0] = 0; _pop_until = now + 400; _pop_msg = false; }
+      _dirty = true;
+      if (held >= OK_UNLOCK_MS) { _locked = false; _unlock_done = true; popup("Odblokowano", "dalsze trzymanie: SOS", NULL, 1500); }
+    }
+    if (held >= OK_SOS_SHOW_MS && !_sos_sent) {
+      char l1[32]; unsigned long left = (OK_SOS_MS - (held < OK_SOS_MS ? held : OK_SOS_MS) + 999) / 1000;
+      snprintf(l1, sizeof(l1), "SOS za %lu s", left);
+      strcpy(_pop1, l1); strcpy(_pop2, "puść OK = anuluj"); _pop3[0] = 0;
+      _pop_pct = (int)((held - OK_SOS_SHOW_MS) * 100 / (OK_SOS_MS - OK_SOS_SHOW_MS)); if (_pop_pct > 100) _pop_pct = 100;
+      _pop_until = now + 400; _pop_msg = false; _dirty = true;
+      if (held >= OK_SOS_MS) { _sos_sent = true; _locked = false; sendSOS(); }
+    }
+  }
+  if (!down && _ok_down) {
+    _ok_down = false;
+    unsigned long held = now - _ok_t0;
+    if (!_sos_sent && held >= OK_SOS_SHOW_MS) popup("SOS anulowane");
+    else if (held < OK_CLICK_MS && !_ok_woke && !_locked) { _clicks++; _click_t = now; }
+    else if (held < OK_CLICK_MS && _locked) popup("Zablokowane", "trzymaj OK 2 s");
+    _pop_pct = -1;
+  }
+  if (_clicks && !_ok_down) {
+    if (!shortcutsHere()) { int n = _clicks; _clicks = 0; for (int i = 0; i < n; i++) key('O'); }
+    else if (now - _click_t > OK_MULTI_MS) { int n = _clicks; _clicks = 0; okClicks(n); }
+  }
+}
+
+// ---------------- petla ----------------
+void UITask::loop() {
+  unsigned long now = millis();
+#ifdef PIN_BUZZER
+  if (buzzer.isPlaying()) buzzer.loop();
+  if (beep_restore && !buzzer.isPlaying()) { beep_restore = false; buzzer.quiet(_prefs->buzzer_quiet); }
+#endif
+  if (_screen == SCR_SPLASH) {
+    unsigned long t = now - _splash_at;
+#ifdef PIN_BUZZER
+    static bool beeped = false;
+    if (!beeped && t >= 1900) { beeped = true; if (buzzer.isQuiet()) { buzzer.quiet(false); beep_restore = true; } buzzer.play("st:d=16,o=6,b=200:c,p,c"); }
+#endif
+    bool any = user_btn.isPressed() || joystick_left.isPressed() || joystick_right.isPressed() || back_btn.isPressed();
+    if (t >= 2400 || (t > 400 && any)) { _screen = SCR_HOME; _page = P_START; _dirty = true; _last_input = now; }
+    else if (now >= _next_render) { render(); _next_render = now + 30; }
+    return;
+  }
+
+  okLoop();
+  char k = 0;
+  if (joystick_left.check() == BUTTON_EVENT_CLICK) k = 'L';
+  if (joystick_right.check() == BUTTON_EVENT_CLICK) k = 'R';
+  if (joy_up.check() == BUTTON_EVENT_CLICK) k = 'U';
+  if (joy_down.check() == BUTTON_EVENT_CLICK) k = 'D';
+  int bev = back_btn.check();
+  if (bev == BUTTON_EVENT_CLICK) k = 'B';
+  else if (bev == BUTTON_EVENT_LONG_PRESS) k = 'H';
+  if (k) {
+    bool was_off = !_on;
+    wake();
+    if (!was_off) {
+      if (_locked) popup("Zablokowane", "trzymaj OK 2 s");
+      else key(k);
+    } else if (_locked) popup("Zablokowane", "trzymaj OK 2 s");
+  }
+
+  // wygaszanie i blokada (na zasilaniu USB ekran zawsze wlaczony, bez blokady)
+  static const unsigned long TO[4] = { 15000UL, 30000UL, 60000UL, 0 };
+  unsigned long to = TO[_timeout_idx & 3];
+  if (_on && to && !usbPowered() && !_ok_down && now - _last_input > to) {
+    if (_display) _display->turnOff();
+    _on = false;
+    if (_lock_en) _locked = true;
+    _pop_until = 0;
+  }
+  if (usbPowered()) _locked = false;
+
+  if (_on && (_dirty || now >= _next_render)) {
+    render(); _dirty = false; _next_render = now + 500;
+  }
+}
+
+// ---------------- klawisze ----------------
+void UITask::key(char k) {
+  if (k == 'H') { _screen = SCR_HOME; _page = P_START; _sel = 0; _top = 0; _mapper_list = false; return; }
+  if (_pop_msg && _pop_until > millis() && k == 'O') {       // OK na okienku nowej wiadomosci: otworz watek
+    _pop_until = 0; _pop_msg = false;
+    buildThreads();
+    _thread_sel = 0; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+    return;
+  }
+  _pop_until = 0;
+  switch (_screen) {
+    case SCR_HOME: homeKey(k); break;
+    case SCR_MENU: menuKey(k); break;
+    case SCR_THREAD: {
+      int idx[UI_MSG_MAX], n = 0;
+      for (int i = 0; i < _msg_n; i++) if (strcmp(_msgs[i].thread, _threads[_thread_sel]) == 0) idx[n++] = i;
+      if (_thread_msg < 0 || _thread_msg >= n) _thread_msg = n - 1;
+      char lines[12][32]; int nl = n ? wrapText(_msgs[idx[_thread_msg]].text, lines, 12, 21) : 0;
+      if (k == 'D') { if (_thread_line + 4 < nl) _thread_line++; else if (_thread_msg < n - 1) { _thread_msg++; _thread_line = 0; } }
+      else if (k == 'U') { if (_thread_line > 0) _thread_line--; else if (_thread_msg > 0) { _thread_msg--; _thread_line = 0; } }
+      else if (k == 'B' || k == 'L') { _screen = SCR_HOME; _page = P_MSGS; }
+      break;
+    }
+    case SCR_LINES: case SCR_RPT:
+      if (k == 'B' || k == 'L' || k == 'O') { _screen = SCR_HOME; }
+      break;
+  }
+}
+
+void UITask::homeKey(char k) {
+  if (k == 'L' || k == 'R') {
+    _page = (_page + (k == 'R' ? 1 : P_COUNT - 1)) % P_COUNT;
+    _sel = 0; _top = 0; _mapper_list = false; _armed_item = -1;
+    if (_page == P_RPT) buildRpts();
+    if (_page == P_MSGS) buildThreads();
+    return;
+  }
+  if (k == 'B') { if (_page != P_START) { _page = P_START; _sel = 0; _top = 0; } return; }
+  int count = _page == P_MSGS ? _thread_n : _page == P_RPT ? _rpt_n : _page == P_SET ? menuCount(0) : 0;
+  if (_page == P_MAPPER && (k == 'U' || k == 'D')) { _mapper_list = (k == 'D'); return; }
+  if ((k == 'U' || k == 'D') && count > 0) {
+    _sel = (_sel + (k == 'D' ? 1 : count - 1)) % count;
+    if (_sel < _top) _top = _sel;
+    if (_sel >= _top + ROWS) _top = _sel - ROWS + 1;
+    _armed_item = -1;
+    return;
+  }
+  if (k != 'O') return;
+  switch (_page) {
+    case P_START:
+      if (unreadCount() > 0 && _thread_n > 0) {
+        for (int t = 0; t < _thread_n; t++) if (unreadCount(_threads[t])) { _thread_sel = t; break; }
+        _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD;
+      } else { _page = P_MSGS; buildThreads(); }
+      break;
+    case P_MSGS:
+      if (_thread_n) { _thread_sel = _sel; _thread_msg = -1; _thread_line = 0; _screen = SCR_THREAD; }
+      break;
+    case P_RPT:
+      if (_rpt_n) _screen = SCR_RPT;
+      break;
+    case P_SET:
+      _menu = 0; menuAction(+1);
+      break;
+  }
+}
+
+// ---------------- menu ustawien ----------------
+// 0 = glowne (strona Ustawienia), 1 Mapper, 2 Bluetooth, 3 Radio, 4 GPS, 5 Advert, 6 Ekran, 7 Dzwiek
+static const uint8_t TXP[] = { 2, 5, 8, 11, 14, 17, 20, 22 };
+static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
+
+int UITask::menuCount(int id) {
+  static const uint8_t C[8] = { 10, 4, 3, 4, 3, 2, 3, 2 };
+  return id >= 0 && id < 8 ? C[id] : 0;
+}
+
+void UITask::menuItem(int id, int i, char* L, char* V) {
+  V[0] = 0;
+  bool armed = _armed_item == id * 16 + i && millis() - _stop_armed < CONFIRM_MS;
+  switch (id) {
+    case 0: {
+      static const char* const N[10] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Restart", "Wyłącz" };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, mapper.isRunning() ? "WŁ" : "STOP");
+      if (i == 1) strcpy(V, isBluetoothEnabled() ? (hasConnection() ? "połącz." : "WŁ") : "WYŁ");
+      if (i == 2) strcpy(V, the_mesh.mpRadioIsSF6() ? "SF6" : "inne!");
+      if (i == 3) strcpy(V, _prefs->gps_enabled ? "WŁ" : "WYŁ");
+      if (i == 5) strcpy(V, TO_LABEL[_timeout_idx & 3]);
+      if ((i == 8 || i == 9) && armed) strcpy(V, "OK?");
+      break;
+    }
+    case 1: {
+      static const char* const N[4] = { "Mapowanie", "Ping co", "Dźwięk", "Nowa sesja" };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, armed ? "STOP? OK" : mapper.isRunning() ? "WŁ" : "STOP");
+      if (i == 1) snprintf(V, 12, "%d s", mapper.getInterval());
+      if (i == 2) strcpy(V, mapper.soundOn() ? "WŁ" : "WYŁ");
+      if (i == 3 && armed) strcpy(V, "OK?");
+      break;
+    }
+    case 2: {
+      static const char* const N[3] = { "Bluetooth", "PIN", "Telefon" };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, isBluetoothEnabled() ? "WŁ" : "WYŁ");
+      if (i == 1) { uint32_t p = the_mesh.getBLEPin(); if (p) snprintf(V, 12, "%06lu", (unsigned long)p); else strcpy(V, "brak"); }
+      if (i == 2) strcpy(V, hasConnection() ? "połączony" : "brak");
+      break;
+    }
+    case 3: {
+      static const char* const N[4] = { "Ustaw preset SF6", "Moc nadawania", "Częstotliwość", "SF / BW" };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, the_mesh.mpRadioIsSF6() ? "jest" : "");
+      if (i == 1) snprintf(V, 12, "%d dBm", (int)_prefs->tx_power_dbm);
+      if (i == 2) { int f = (int)(_prefs->freq * 1000 + 0.5f); snprintf(V, 12, "%d,%03d", f / 1000, f % 1000); }
+      if (i == 3) { int b = (int)(_prefs->bw * 10 + 0.5f); snprintf(V, 14, "SF%d %d,%d", _prefs->sf, b / 10, b % 10); }
+      break;
+    }
+    case 4: {
+      static const char* const N[3] = { "GPS", "Satelity", "Pozycja w advert" };
+      strcpy(L, N[i]);
+      LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+      if (i == 0) strcpy(V, _prefs->gps_enabled ? "WŁ" : "WYŁ");
+      if (i == 1) { if (l && l->isValid()) snprintf(V, 12, "%d (fix)", (int)l->satellitesCount()); else snprintf(V, 12, "%d", l ? (int)l->satellitesCount() : 0); }
+      if (i == 2) strcpy(V, _prefs->advert_loc_policy ? "WŁ" : "WYŁ");
+      break;
+    }
+    case 5: {
+      static const char* const N[2] = { "Wyślij: sąsiedzi", "Wyślij: cała sieć" };
+      strcpy(L, N[i]);
+      break;
+    }
+    case 6: {
+      static const char* const N[3] = { "Wygaszanie", "Blokada", "Budzenie: wiad." };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, TO_LABEL[_timeout_idx & 3]);
+      if (i == 1) strcpy(V, _lock_en ? "WŁ" : "WYŁ");
+      if (i == 2) strcpy(V, _wake_msg ? "WŁ" : "WYŁ");
+      break;
+    }
+    case 7: {
+      static const char* const N[2] = { "Wiadomości", "Mapper (RPT)" };
+      strcpy(L, N[i]);
+      if (i == 0) strcpy(V, _prefs->buzzer_quiet ? "WYŁ" : "WŁ");
+      if (i == 1) strcpy(V, mapper.soundOn() ? "WŁ" : "WYŁ");
+      break;
+    }
+  }
+}
+
+void UITask::openMenu(int id) { _menu = id; _msel[id] = 0; _screen = SCR_MENU; _armed_item = -1; }
+
+void UITask::menuKey(char k) {
+  int n = menuCount(_menu), &s = _msel[_menu];
+  if (k == 'U' || k == 'D') { s = (s + (k == 'D' ? 1 : n - 1)) % n; _armed_item = -1; return; }
+  if (k == 'B') { _screen = SCR_HOME; _page = P_SET; return; }
+  bool cycle = (_menu == 1 && s == 1) || (_menu == 3 && s == 1) || (_menu == 6 && s == 0);
+  if (k == 'L') { if (cycle) menuAction(-1); else { _screen = SCR_HOME; _page = P_SET; } return; }
+  if (k == 'O' || k == 'R') menuAction(+1);
+}
+
+void UITask::menuAction(int dir) {
+  int id = _menu;
+  int i = id == 0 ? _sel : _msel[id];
+  unsigned long now = millis();
+  bool armed = _armed_item == id * 16 + i && now - _stop_armed < CONFIRM_MS;
+  auto arm = [&]() { _armed_item = id * 16 + i; _stop_armed = now; };
+  switch (id) {
+    case 0:
+      if (i >= 0 && i <= 6) { openMenu(i + 1); return; }
+      if (i == 7) {                               // Informacje
+        char b[32];
+        _nlines = 0; strcpy(_lines_title, "Informacje");
+        snprintf(_lines[_nlines++], 32, "%s", _prefs->node_name);
+        const uint8_t* k = the_mesh.mpPubKey();
+        snprintf(_lines[_nlines++], 32, "klucz %02X%02X%02X%02X…", k[0], k[1], k[2], k[3]);
+        snprintf(_lines[_nlines++], 32, "MC SF6 %s (%s)", UI_VERSION, FIRMWARE_VERSION);
+        snprintf(_lines[_nlines++], 32, "kontakty %d/%d", the_mesh.getNumContacts(), MAX_CONTACTS);
+        uint16_t mv = getBattMilliVolts();
+        snprintf(_lines[_nlines++], 32, "bateria %d,%02d V %d%%", mv / 1000, (mv % 1000) / 10, battPct(mv));
+        MapperView v; mapper.getView(v);
+        snprintf(b, sizeof(b), "mapper: do wysł. %lu", (unsigned long) v.pending);
+        strcpy(_lines[_nlines++], b);
+        _screen = SCR_LINES;
+        return;
+      }
+      if (i == 8) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
+      if (i == 9) {
+        if (!armed) { arm(); return; }
+        popup("Wyłączanie..."); render(); delay(600);
+        if (_display) _display->turnOff();
+        _board->powerOff();
+      }
+      return;
+    case 1:
+      if (i == 0) {
+        if (!mapper.isRunning()) { mapperSet(true); _armed_item = -1; }
+        else if (armed) { mapperSet(false); _armed_item = -1; }
+        else arm();
+      }
+      if (i == 1) { int s = mapper.getInterval() + dir * 10; if (s > 60) s = 20; if (s < 20) s = 60; mapper.setInterval(s); }
+      if (i == 2) mapper.setSound(!mapper.soundOn());
+      if (i == 3) { if (!armed) { arm(); return; } mapper.newSession(); _armed_item = -1; popup("Nowa sesja", "liczniki od zera"); }
+      return;
+    case 2:
+      if (i == 0) { if (isBluetoothEnabled()) disableBluetooth(); else enableBluetooth(); popup(isBluetoothEnabled() ? "Bluetooth WŁ" : "Bluetooth WYŁ"); }
+      return;
+    case 3:
+      if (i == 0) { the_mesh.uiSetRadioSF6(); popup("Radio: preset SF6", "869,618 · SF6 · 62,5"); }
+      if (i == 1) {
+        int cur = _prefs->tx_power_dbm, n = sizeof(TXP), k = 0;
+        while (k < n && TXP[k] < cur) k++;
+        if (k < n && TXP[k] == cur) k += dir; else if (dir < 0) k--;
+        if (k >= n || TXP[(k < 0 ? 0 : k)] > the_mesh.uiMaxTxPower()) k = 0;
+        if (k < 0) { k = n - 1; while (k > 0 && TXP[k] > the_mesh.uiMaxTxPower()) k--; }
+        the_mesh.uiSetTxPower(TXP[k]);
+      }
+      return;
+    case 4:
+      if (i == 0) {
+        bool on = !_prefs->gps_enabled;
+        the_mesh.mpSetGps(on);
+        popup(on ? "GPS WŁ" : "GPS WYŁ", (!on && mapper.isRunning()) ? "mapper nie będzie pingował" : NULL);
+      }
+      if (i == 2) { _prefs->advert_loc_policy = _prefs->advert_loc_policy ? ADVERT_LOC_NONE : ADVERT_LOC_SHARE; the_mesh.savePrefs(); }
+      return;
+    case 5:
+      if (i == 0) popup(the_mesh.advert() ? "Advert wysłany" : "Błąd advertu", "do sąsiadów (0 hop)");
+      if (i == 1) popup(the_mesh.uiAdvertFlood() ? "Advert wysłany" : "Błąd advertu", "do całej sieci");
+      return;
+    case 6:
+      if (i == 0) _timeout_idx = (_timeout_idx + (dir > 0 ? 1 : 3)) % 4;
+      if (i == 1) _lock_en = !_lock_en;
+      if (i == 2) _wake_msg = !_wake_msg;
+      saveUiPrefs();
+      return;
+    case 7:
+      if (i == 0) {
+        _prefs->buzzer_quiet = _prefs->buzzer_quiet ? 0 : 1; the_mesh.savePrefs();
+#ifdef PIN_BUZZER
+        buzzer.quiet(_prefs->buzzer_quiet);
+#endif
+      }
+      if (i == 1) mapper.setSound(!mapper.soundOn());
+      return;
+  }
+}
+
+// ---------------- rysowanie ----------------
+void UITask::render() {
+  if (!_display) return;
+  _display->startFrame();
+  _g.color(true);
+  if (_screen == SCR_SPLASH) { drawSplash(millis() - _splash_at); _display->endFrame(); return; }
+  statusBar();
+  switch (_screen) {
+    case SCR_HOME:
+      switch (_page) {
+        case P_START: drawStart(); break;
+        case P_MSGS: drawMsgs(); break;
+        case P_MAPPER: drawMapper(); break;
+        case P_RPT: drawRpts(); break;
+        case P_SET: drawSettings(); break;
+      }
+      break;
+    case SCR_THREAD: drawThread(); break;
+    case SCR_MENU: drawMenu(); break;
+    case SCR_LINES: drawLines(); break;
+    case SCR_RPT: drawRptDetail(); break;
+  }
+  if (_pop_until > millis()) drawPopup();
+  _display->endFrame();
+}
+
+void UITask::statusBar() {
+  char b[16];
+  fmtHM(b, sizeof(b), rtc_clock.getCurrentTime());
+  _g.text(0, 0, b);
+  int x = 113;
+  uint16_t mv = getBattMilliVolts();
+  _g.iconBattery(x, 1, battPct(mv), usbPowered());
+  if (isBluetoothEnabled()) { x -= 10; _g.iconBt(x, 0, hasConnection()); }
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  if (_prefs->gps_enabled && l) {
+    snprintf(b, sizeof(b), "%d", (int) l->satellitesCount());
+    x -= _g.textWidth(b) + 1; _g.text(x, 0, b);
+    x -= 9; _g.iconGps(x, 1, l->isValid());
+  }
+  int un = unreadCount();
+  if (un) {
+    snprintf(b, sizeof(b), "%d", un);
+    x -= _g.textWidth(b) + 1; _g.text(x, 0, b);
+    x -= 11; _g.frame(x, 1, 9, 7);
+    for (int i = 0; i < 4; i++) { _g.rect(x + 1 + i, 2 + i, 1, 1); _g.rect(x + 7 - i, 2 + i, 1, 1); }
+  }
+  if (_locked) { x -= 9; _g.iconLock(x, 1); }
+  if (mapper.isRunning()) {
+    MapperView v; mapper.getView(v);
+    bool blink = v.collecting && (millis() / 250) % 2;
+    x -= 7; if (!blink) _g.rect(x, 2, 5, 5); else _g.frame(x, 2, 5, 5);
+  }
+  _g.hline(0, 9, 128);
+}
+
+static void titleRow(MapperGfx& g, const char* t, const char* right) {
+  g.text(0, 12, t);
+  if (right && right[0]) g.textRight(127, 12, right);
+  g.hline(0, 21, 128);
+}
+
+void UITask::drawStart() {
+  char b[40];
+  _g.textCenter(64, 12, _prefs->node_name);
+  fmtHM(b, sizeof(b), rtc_clock.getCurrentTime());
+  _g.textCenter(64, 22, b, 2);
+  int un = unreadCount();
+  if (un && _thread_n) {
+    const char* who = _threads[0];
+    for (int t = 0; t < _thread_n; t++) if (unreadCount(_threads[t])) { who = _threads[t]; break; }
+    _g.frame(0, 41, 9, 7); for (int i = 0; i < 4; i++) { _g.rect(1 + i, 42 + i, 1, 1); _g.rect(7 - i, 42 + i, 1, 1); }
+    char w[24]; MapperGfx::fit(w, sizeof(w), who, 60);
+    snprintf(b, sizeof(b), "%d %s · %s", un, un == 1 ? "nowa" : "nowe", w);
+    _g.text(12, 40, b);
+  } else _g.text(0, 40, "brak nowych wiadomości");
+  MapperView v; mapper.getView(v);
+  if (v.run) {
+    _g.rect(1, 52, 4, 4);
+    const char* st = !v.radio_ok ? "radio nie SF6!" : !v.gps_fix ? "czekam na GPS" : v.phone_mapping ? "mapuje telefon"
+                   : v.stationary ? "pauza (postój)" : "mapuje";
+    snprintf(b, sizeof(b), "%s · %lu/%lu", st, (unsigned long) v.hits, (unsigned long) v.pings);
+    _g.text(8, 50, b);
+  } else _g.text(0, 50, "mapper wyłączony");
+}
+
+void UITask::drawMsgs() {
+  titleRow(_g, "< Wiadomości >", NULL);
+  if (!_thread_n) { _g.textCenter(64, 34, "brak wiadomości"); return; }
+  if (_sel >= _thread_n) _sel = _thread_n - 1;
+  for (int r = 0; r < ROWS; r++) {
+    int i = _top + r; if (i >= _thread_n) break;
+    int y = 24 + r * ROW_H;
+    char n[24], c[8]; MapperGfx::fit(n, sizeof(n), _threads[i], 100);
+    int u = unreadCount(_threads[i]); c[0] = 0; if (u) snprintf(c, sizeof(c), "%d", u);
+    if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, n); if (c[0]) _g.textRight(125, y, c);
+    if (i == _sel) _g.color(true);
+  }
+}
+
+void UITask::drawThread() {
+  int idx[UI_MSG_MAX], n = 0;
+  for (int i = 0; i < _msg_n; i++) if (_thread_sel < _thread_n && strcmp(_msgs[i].thread, _threads[_thread_sel]) == 0) idx[n++] = i;
+  if (!n) { _screen = SCR_HOME; _page = P_MSGS; return; }
+  if (_thread_msg < 0 || _thread_msg >= n) _thread_msg = n - 1;
+  UiMsg& m = _msgs[idx[_thread_msg]];
+  m.unread = false;
+  char t[16], name[24];
+  fmtHM(t, sizeof(t), m.ts);
+  MapperGfx::fit(name, sizeof(name), m.mine ? "Ty" : m.thread, 90);
+  titleRow(_g, name, t);
+  char lines[12][32]; int nl = wrapText(m.text, lines, 12, 21);
+  if (_thread_line > nl - 1) _thread_line = nl > 4 ? nl - 4 : 0;
+  for (int r = 0; r < 3 && _thread_line + r < nl; r++) _g.text(0, 24 + r * 10, lines[_thread_line + r]);
+  char f[24]; snprintf(f, sizeof(f), "%d/%d", _thread_msg + 1, n);
+  _g.hline(0, 54, 128);
+  _g.text(0, 56, nl > _thread_line + 3 ? "w dół: dalej" : "góra/dół: inne");
+  _g.textRight(127, 56, f);
+}
+
+void UITask::drawMapper() {
+  MapperView v; mapper.getView(v);
+  titleRow(_g, "< Mapper >", v.run ? "WŁ" : "STOP");
+  char b[32];
+  if (!_mapper_list) {
+    const char* st = !v.run ? "wyłączony" : !v.radio_ok ? "radio nie SF6!" : v.log_full ? "pamięć pełna!"
+                   : v.phone_mapping ? "mapuje telefon" : !v.gps_fix ? "czekam na GPS" : v.stationary ? "pauza (postój)"
+                   : v.collecting ? "ping..." : "mapuje";
+    _g.text(0, 24, st);
+    if (v.run && v.radio_ok && v.gps_fix && !v.stationary && !v.phone_mapping && !v.collecting) { snprintf(b, sizeof(b), "za %d s", v.next_ping_s); _g.textRight(127, 24, b); }
+    _g.text(0, 34, "odpowiedzi"); snprintf(b, sizeof(b), "%lu / %lu", (unsigned long) v.hits, (unsigned long) v.pings); _g.textRight(127, 34, b);
+    _g.text(0, 44, "do wysłania"); snprintf(b, sizeof(b), "%lu", (unsigned long) v.pending); _g.textRight(127, 44, b);
+    if (v.last_n > 0) {
+      char n[24], s[12]; rptName(v.last_prefix, n, sizeof(n)); fmtSnr(s, sizeof(s), v.last_snr_x4);
+      char nf[24]; MapperGfx::fit(nf, sizeof(nf), n, 88);
+      _g.text(0, 54, nf); _g.textRight(127, 54, s);
+    } else _g.text(0, 54, "w dół: ostatnie RPT");
+  } else {
+    const MapperRecent* r = mapper.recent();
+    int shown = 0;
+    for (int i = 0; i < CMAP_RECENT && shown < 4; i++) {
+      if (!r[i].valid) continue;
+      int y = 24 + shown * ROW_H;
+      char t[8], n[24], nf[20], s[12];
+      fmtHM(t, sizeof(t), r[i].ts); rptName(r[i].prefix, n, sizeof(n)); MapperGfx::fit(nf, sizeof(nf), n, 58); fmtSnr(s, sizeof(s), r[i].snr_x4);
+      _g.text(0, y, t); _g.text(33, y, nf); _g.textRight(127, y, s);
+      shown++;
+    }
+    if (!shown) _g.textCenter(64, 34, "brak odpowiedzi");
+  }
+}
+
+void UITask::drawRpts() {
+  titleRow(_g, "< Repeatery >", NULL);
+  if (millis() - _rpt_at > 10000) buildRpts();
+  if (!_rpt_n) { _g.textCenter(64, 34, "brak repeaterów"); return; }
+  if (_sel >= _rpt_n) _sel = _rpt_n - 1;
+  for (int r = 0; r < ROWS; r++) {
+    int i = _top + r; if (i >= _rpt_n) break;
+    int y = 24 + r * ROW_H;
+    char n[24], d[16];
+    if (_rpts[i].dist_m >= 0) fmtDist(d, sizeof(d), _rpts[i].dist_m); else fmtAgo(d, sizeof(d), _rpts[i].last);
+    MapperGfx::fit(n, sizeof(n), _rpts[i].name, 124 - _g.textWidth(d) - 6);
+    if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, n); _g.textRight(125, y, d);
+    if (i == _sel) _g.color(true);
+  }
+}
+
+void UITask::drawRptDetail() {
+  if (_sel >= _rpt_n) { _screen = SCR_HOME; return; }
+  Rpt& r = _rpts[_sel];
+  char b[32], n[24];
+  MapperGfx::fit(n, sizeof(n), r.name, 124);
+  titleRow(_g, n, NULL);
+  snprintf(b, sizeof(b), "klucz %02X%02X%02X%02X", r.prefix[0], r.prefix[1], r.prefix[2], r.prefix[3]);
+  _g.text(0, 24, b);
+  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
+  if (r.lat || r.lon) {
+    if (r.dist_m >= 0 && l && l->isValid()) {
+      char d[16]; fmtDist(d, sizeof(d), r.dist_m);
+      int br = bearing(l->getLatitude() / 1e6, l->getLongitude() / 1e6, r.lat / 1e6, r.lon / 1e6);
+      snprintf(b, sizeof(b), "%s · %s %d°", d, compass(br), br);
+    } else snprintf(b, sizeof(b), "odległość: brak GPS");
+    _g.text(0, 34, b);
+    snprintf(b, sizeof(b), "%.4f %.4f", r.lat / 1e6, r.lon / 1e6);
+    _g.text(0, 44, b);
+  } else _g.text(0, 34, "brak pozycji");
+  char a[16]; fmtAgo(a, sizeof(a), r.last);
+  snprintf(b, sizeof(b), "advert: %s", a);
+  _g.text(0, 54, b);
+}
+
+void UITask::drawSettings() {
+  titleRow(_g, "< Ustawienia >", NULL);
+  int n = menuCount(0);
+  if (_sel >= n) _sel = n - 1;
+  for (int r = 0; r < ROWS; r++) {
+    int i = _top + r; if (i >= n) break;
+    int y = 24 + r * ROW_H;
+    char L[28], V[16]; menuItem(0, i, L, V);
+    if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, L); if (V[0]) _g.textRight(125, y, V);
+    if (i == _sel) _g.color(true);
+  }
+}
+
+void UITask::drawMenu() {
+  static const char* const T[8] = { "Ustawienia", "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk" };
+  titleRow(_g, T[_menu], NULL);
+  int n = menuCount(_menu), s = _msel[_menu];
+  int top = s >= ROWS ? s - ROWS + 1 : 0;
+  for (int r = 0; r < ROWS; r++) {
+    int i = top + r; if (i >= n) break;
+    int y = 24 + r * ROW_H;
+    char L[28], V[16]; menuItem(_menu, i, L, V);
+    if (i == s) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
+    _g.text(2, y, L); if (V[0]) _g.textRight(125, y, V);
+    if (i == s) _g.color(true);
+  }
+}
+
+void UITask::drawLines() {
+  titleRow(_g, _lines_title, NULL);
+  for (int i = 0; i < _nlines && i < 4; i++) _g.text(0, 24 + i * 10, _lines[i]);
+  if (_nlines > 4) { for (int i = 4; i < _nlines && i < 5; i++) _g.text(0, 54, _lines[i]); }
+}
+
+void UITask::drawPopup() {
+  _g.color(false); _g.rect(5, 13, 118, 48); _g.color(true);
+  _g.frame(6, 14, 116, 46); _g.frame(7, 15, 114, 44);
+  int y = _pop3[0] || _pop_pct >= 0 ? 19 : 24;
+  _g.textCenter(64, y, _pop1);
+  if (_pop2[0]) _g.textCenter(64, y + 11, _pop2);
+  if (_pop_pct >= 0) _g.progress(16, 43, 96, 8, _pop_pct);
+  else if (_pop3[0]) _g.textCenter(64, y + 22, _pop3);
+}
+
+// Animacja startowa: „MC SF6” wjezdza z prawej, fale radiowe, nazwa i wersja
+void UITask::drawSplash(unsigned long t) {
+  const char* title = "MC SF6";
+  const int w = _g.textWidth(title, 3);
+  const int x_end = (128 - w) / 2;
+  int x = x_end;
+  if (t < 500) {
+    long p = (long) t * 1000 / 500, inv = 1000 - p;
+    long ease = 1000 - inv * inv * inv / 1000000;
+    x = 128 - (int)((128 - x_end) * ease / 1000);
+  }
+  _g.text(x, 3, title, 3);
+  if (t >= 300) {
+    const int cx = 64, cy = 42;
+    _g.rect(cx - 1, cy - 1, 3, 3);
+    unsigned long tw = t - 300;
+    for (int k = 0; k < 3; k++) { int r = (int)((tw / 45 + k * 6) % 15) + 3; _g.arcTop(cx, cy, r, 29); }
+  }
+  if (t >= 600 && _prefs) _g.textCenter(64, 46, _prefs->node_name);
+  if (t >= 900) _g.textRight(127, 56, "v" UI_VERSION);
+}

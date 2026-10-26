@@ -143,19 +143,34 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
 
 - **Jako companion:** działa jak zawsze z aplikacją MeshCore (wiadomości, **do 500 kontaktów** — oficjalny companion ma 350, 40 kanałów) i z Mapperem SF6 w telefonie
   (mapowanie z telefonu). PIN Bluetooth jest losowy i wyświetla się na ekranie, jak w oficjalnym firmware.
-- **Ekran (Wio i T-Echo):** zaraz po stronie startowej są dwie strony mappera, a dalej strony companiona po polsku
-  (ostatnio słyszane, radio, Bluetooth, advert, GPS, czujniki, wyłączanie):
-  1. **SF6 Mapper:** WŁ/STOP, stan (mapuje / czekam na GPS / pauza / radio nie SF6 / mapuje telefon), odliczanie do pingu
-     (tylko Wio), odpowiedzi/pingi, satelity, punkty do wysłania;
-  2. **Ostatnie RPT:** 4 ostatnie repeatery, które odpowiedziały: godzina, 2 bajty klucza, SNR.
-- **Menu mappera:** środek joysticka na stronie „SF6 Mapper” (na T-Echo przytrzymanie przycisku) otwiera menu:
-  - **Mapowanie** WŁ/STOP. STOP wymaga drugiego naciśnięcia w ciągu 4 s;
-  - **Ping co** 20/30/40/50/60 s;
-  - **Dźwięk** przy odpowiedzi repeatera WŁ/WYŁ;
-  - **Wyjście**.
+- **Ekran na Wio Tracker L1 (od 1.2.0): interfejs „MC SF6”**, cały po polsku, z polskimi literami:
+  - **animacja startowa „MC SF6”** z falami radiowymi, nazwą i wersją, dwa piknięcia;
+  - **pasek stanu** na każdym ekranie: godzina, kropka mappera (miga przy pingu), kłódka blokady, nieprzeczytane
+    wiadomości, GPS z liczbą satelitów, Bluetooth (połączony = odwrócona ikona), bateria;
+  - **ekrany** (joystick lewo/prawo): **Start** (nazwa, godzina, nowe wiadomości, stan mappera) → **Wiadomości**
+    (wątki prywatne i kanały, liczba nieprzeczytanych, odczyt z przewijaniem) → **Mapper** (stan, a joystick w dół
+    pokazuje ostatnie repeatery z nazwami i SNR) → **Repeatery** (słyszane repeatery według odległości, szczegóły:
+    klucz, odległość i kierunek, pozycja, ostatni advert) → **Ustawienia**;
+  - **Ustawienia:** Mapper (mapowanie, ping co, dźwięk, nowa sesja), Bluetooth (wł./wył., PIN), Radio (preset SF6
+    jednym kliknięciem, moc nadawania), GPS (wł./wył., pozycja w advercie), Advert (do sąsiadów / do całej sieci),
+    Ekran (wygaszanie 15/30/60 s/nigdy, blokada, budzenie przy wiadomości), Dźwięk (wiadomości, mapper),
+    Informacje, Restart, Wyłącz;
+  - **nowa wiadomość:** okienko z nadawcą i początkiem treści, dźwięk. OK otwiera wiadomość;
+  - **sterowanie:** góra/dół przewija listy, OK wybiera, wstecz cofa, przytrzymanie wstecz wraca na Start.
+- **Skróty przycisku OK (Wio):**
 
-  Na Wio poruszasz się joystickiem góra/dół, a lewo wychodzi z menu. Na T-Echo kliknięcie przechodzi niżej, dwuklik wyżej,
-  a przytrzymanie zmienia wartość.
+  | Gest | Działanie |
+  |---|---|
+  | przytrzymanie 2 s | odblokowanie ekranu |
+  | 2× szybko (na Starcie i ekranie Mappera) | mapper WŁ + GPS |
+  | 3× szybko (na Starcie i ekranie Mappera) | mapper STOP + GPS wył. |
+  | przytrzymanie 8 s (na każdym ekranie, także zablokowanym) | **SOS** na kanał Public z aktualną pozycją i linkiem do mapy |
+
+  Od 5. sekundy trzymania widać odliczanie „SOS za … s”, a puszczenie OK anuluje wysyłkę. Bez fixu GPS wysyłana jest
+  ostatnia znana pozycja (z dopiskiem), a bez żadnej pozycji sama prośba o pomoc.
+- **Blokada ekranu (Wio):** po wygaszeniu ekranu. Na zasilaniu USB ekran nie gaśnie i się nie blokuje.
+- **Ekran na T-Echo:** dotychczasowy interfejs companiona z dwiema stronami mappera („SF6 Mapper” i „Ostatnie RPT”)
+  oraz menu mappera (przytrzymanie przycisku).
 - **GPS włącza się i wyłącza razem z mapperem:** włączenie mappera (z ekranu albo z aplikacji) włącza GPS, a STOP go wyłącza.
   Po restarcie z włączonym mapperem GPS włącza się sam.
 - **Sygnał przy odpowiedzi repeatera** (Wio, buzzer): krótkie piknięcie. Gra także przy wyciszonych wiadomościach,

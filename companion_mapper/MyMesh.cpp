@@ -2242,6 +2242,28 @@ bool MyMesh::mpRadioIsSF6() {            // preset SF6 sieci MeshCore Poludnie: 
   return fabsf(_prefs.freq - 869.618f) < 0.005f && fabsf(_prefs.bw - 62.5f) < 0.1f && _prefs.sf == 6;
 }
 uint16_t MyMesh::mpBattMv() { return board.getBattMilliVolts(); }
+void MyMesh::uiSetRadioSF6() {           // preset sieci MeshCore Poludnie
+  _prefs.freq = 869.618f; _prefs.bw = 62.5f; _prefs.sf = 6; _prefs.cr = 5;
+  savePrefs();
+  radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+}
+void MyMesh::uiSetTxPower(int8_t dbm) {
+  _prefs.tx_power_dbm = constrain(dbm, -9, MAX_LORA_TX_POWER);
+  savePrefs();
+  radio_driver.setTxPower(_prefs.tx_power_dbm);
+}
+bool MyMesh::uiAdvertFlood() {
+  mesh::Packet* pkt = _prefs.advert_loc_policy == ADVERT_LOC_NONE ? createSelfAdvert(_prefs.node_name)
+                    : createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+  if (!pkt) return false;
+  sendFlood(pkt);
+  return true;
+}
+bool MyMesh::uiSendChannelText(int channel_idx, const char* text) {
+  ChannelDetails cd;
+  if (!getChannel(channel_idx, cd)) return false;
+  return sendGroupMessage(getRTCClock()->getCurrentTimeUnique(), cd.channel, _prefs.node_name, text, strlen(text));
+}
 void MyMesh::mpSetGps(bool on) {
   sensors.setSettingValue("gps", on ? "1" : "0");
   if (_prefs.gps_enabled != (on ? 1 : 0)) { _prefs.gps_enabled = on ? 1 : 0; savePrefs(); }
