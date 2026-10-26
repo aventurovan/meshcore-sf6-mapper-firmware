@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.5.3"
+#define UI_VERSION       "1.5.4"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -371,6 +371,22 @@ void UITask::drawKbd() {
   }
 }
 
+// zaznaczony wiersz: po 1 s postoju dluga nazwa przesuwa sie w lewo (co 0,35 s o znak)
+void UITask::selRow(const char* name, char* out, int outsz, int max_w) {
+  int key = (_screen << 12) ^ (_page << 8) ^ _sel;
+  unsigned long now = millis();
+  if (key != _sel_key) { _sel_key = key; _sel_at = now; }
+  if (_g.textWidth(name) <= max_w || now - _sel_at < 1000) { MapperGfx::fit(out, outsz, name, max_w); return; }
+  int chars = 0; { const char* q = name; while (*q) { uint8_t a; if (MapperGfx::glyphFor(mapperUtf8Next(q), &a)) chars++; } }
+  int fitc = max_w / 6, maxshift = chars - fitc + 1;
+  int shift = (int)((now - _sel_at - 1000) / 350) % (maxshift + 3);
+  if (shift > maxshift) shift = 0;
+  const char* p = name; int k = shift;
+  while (*p && k > 0) { const char* q = p; uint8_t a; if (MapperGfx::glyphFor(mapperUtf8Next(q), &a)) k--; p = q; }
+  MapperGfx::fit(out, outsz, p, max_w);
+  _marquee = true;
+}
+
 // ---------------- repeatery ----------------
 void UITask::buildRpts() {
   _rpt_n = 0; _rpt_at = millis();
@@ -465,6 +481,7 @@ void UITask::okLoop() {
   if (down && !_ok_down) {
     _ok_down = true; _ok_t0 = now; _unlock_done = false; _sos_sent = false;
     _ok_woke = !_on;
+    _ok_from_lock = _locked;                      // przytrzymanie zaczete na blokadzie: tylko odblokowuje, bez SOS
     wake();
   }
   if (down && _ok_down) {
@@ -473,9 +490,9 @@ void UITask::okLoop() {
       _pop_pct = (int)(held * 100 / OK_UNLOCK_MS); if (_pop_pct > 100) _pop_pct = 100;
       if (_pop_until < now + 300) { strcpy(_pop1, "Zablokowane"); strcpy(_pop2, "trzymaj OK 2 s"); _pop3[0] = 0; _pop_until = now + 400; _pop_msg = false; }
       _dirty = true;
-      if (held >= OK_UNLOCK_MS) { _locked = false; _unlock_done = true; popup("Odblokowano", "dalsze trzymanie: SOS", NULL, 1500); }
+      if (held >= OK_UNLOCK_MS) { _locked = false; _unlock_done = true; popup("Odblokowano", NULL, NULL, 1200); }
     }
-    if (held >= OK_SOS_SHOW_MS && !_sos_sent) {
+    if (held >= OK_SOS_SHOW_MS && !_sos_sent && !_ok_from_lock) {
       char l1[32]; unsigned long left = (OK_SOS_MS - (held < OK_SOS_MS ? held : OK_SOS_MS) + 999) / 1000;
       snprintf(l1, sizeof(l1), "SOS za %lu s", left);
       strcpy(_pop1, l1); strcpy(_pop2, "puść OK = anuluj"); _pop3[0] = 0;
@@ -487,7 +504,7 @@ void UITask::okLoop() {
   if (!down && _ok_down) {
     _ok_down = false;
     unsigned long held = now - _ok_t0;
-    if (!_sos_sent && held >= OK_SOS_SHOW_MS) popup("SOS anulowane");
+    if (!_sos_sent && held >= OK_SOS_SHOW_MS && !_ok_from_lock) popup("SOS anulowane");
     else if (held < OK_CLICK_MS && !_ok_woke && !_locked) { _clicks++; _click_t = now; }
     else if (held < OK_CLICK_MS && _locked) popup("Zablokowane", "trzymaj OK 2 s");
     _pop_pct = -1;
@@ -549,7 +566,8 @@ void UITask::loop() {
   if (usbPowered()) _locked = false;
 
   if (_on && (_dirty || now >= _next_render)) {
-    render(); _dirty = false; _next_render = now + 500;
+    _marquee = false;
+    render(); _dirty = false; _next_render = now + (_marquee ? 200 : 500);
   }
 }
 
@@ -1111,6 +1129,13 @@ void UITask::buildMsgRows() {                  // kanaly (wszystkie skonfigurowa
     if (chan) { for (int r = 0; r < _mrow_n; r++) if (strcmp(_mrow[r], _threads[t]) == 0) dup = true; if (dup) continue; }
     strcpy(_mrow[_mrow_n], _threads[t]); _mrow_chan[_mrow_n++] = chan;
   }
+  // na gorze te z najwieksza liczba nieprzeczytanych (stabilnie: kanaly przed rozmowami, potem najnowsze)
+  for (int i = 1; i < _mrow_n; i++) {
+    int ui = unreadCount(_mrow[i]), j = i;
+    char tn[24]; strcpy(tn, _mrow[i]); bool tc = _mrow_chan[i];
+    while (j > 0 && unreadCount(_mrow[j - 1]) < ui) { strcpy(_mrow[j], _mrow[j - 1]); _mrow_chan[j] = _mrow_chan[j - 1]; j--; }
+    strcpy(_mrow[j], tn); _mrow_chan[j] = tc;
+  }
 }
 
 void UITask::openThread(const char* name, bool chan) {
@@ -1127,7 +1152,7 @@ void UITask::drawMsgs() {
     int i = _top + r; if (i >= _mrow_n) break;
     int y = 24 + r * ROW_H;
     char nm[28], t[24], c[8]; c[0] = 0;
-    MapperGfx::fit(t, sizeof(t), _mrow[i], 96);
+    if (i == _sel) selRow(_mrow[i], t, sizeof(t), 96); else MapperGfx::fit(t, sizeof(t), _mrow[i], 96);
     if (_mrow_chan[i] && t[0] != '#') snprintf(nm, sizeof(nm), "#%s", t); else strcpy(nm, t);
     int u = unreadCount(_mrow[i]); if (u) snprintf(c, sizeof(c), "%d", u);
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
@@ -1186,7 +1211,8 @@ void UITask::drawContacts() {
       const char* tg = typeTag(c.type);
       if (tg[0]) strcpy(d, tg); else fmtAgo(d, sizeof(d), c.last_advert_timestamp);
       char cl[32], t[24]; cleanText(cl, sizeof(cl), c.name);
-      MapperGfx::fit(t, sizeof(t), cl, 118 - _g.textWidth(d) - (e.fav ? 6 : 0));
+      int mw = 118 - _g.textWidth(d) - (e.fav ? 6 : 0);
+      if (i == _sel) selRow(cl, t, sizeof(t), mw); else MapperGfx::fit(t, sizeof(t), cl, mw);
       snprintf(nm, sizeof(nm), "%s%s", e.fav ? "*" : "", t);
     }
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
@@ -1303,7 +1329,9 @@ void UITask::drawRpts() {
     else {
       Rpt& rp = _rpts[i - 1];
       if (rp.dist_m >= 0) fmtDist(d, sizeof(d), rp.dist_m); else fmtAgo(d, sizeof(d), rp.last);
-      char t[24]; MapperGfx::fit(t, sizeof(t), rp.name, 118 - _g.textWidth(d) - (rp.fav ? 6 : 0));
+      char cl[32], t[24]; cleanText(cl, sizeof(cl), rp.name);
+      int mw = 118 - _g.textWidth(d) - (rp.fav ? 6 : 0);
+      if (i == _sel) selRow(cl, t, sizeof(t), mw); else MapperGfx::fit(t, sizeof(t), cl, mw);
       snprintf(nm, sizeof(nm), "%s%s", rp.fav ? "*" : "", t);
     }
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }

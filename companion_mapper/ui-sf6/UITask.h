@@ -85,7 +85,10 @@ private:
   bool usbPowered();
 
   // przycisk OK (wlasna obsluga: klikniecia, przytrzymania)
-  bool _ok_down = false, _ok_woke = false, _unlock_done = false, _sos_sent = false;
+  bool _ok_down = false, _ok_woke = false, _unlock_done = false, _sos_sent = false, _ok_from_lock = false;
+  // przewijanie dlugiej nazwy na zaznaczonym wierszu (po chwili postoju)
+  unsigned long _sel_at = 0; int _sel_key = -1; bool _marquee = false;
+  void selRow(const char* name, char* out, int outsz, int max_w);
   unsigned long _ok_t0 = 0, _click_t = 0;
   int _clicks = 0;
   void okLoop();
