@@ -17,7 +17,7 @@
   static genericBuzzer buzzer;
 #endif
 
-#define UI_VERSION       "1.3.0"
+#define UI_VERSION       "1.3.1"
 #define UI_PREFS_FILE    "/sf6ui"
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
@@ -997,7 +997,7 @@ void UITask::drawMsgs() {
     int i = _top + r; if (i >= n) break;
     int y = 24 + r * ROW_H;
     char nm[24], c[8]; c[0] = 0;
-    if (i == 0) strcpy(nm, "» Napisz na Public");
+    if (i == 0) strcpy(nm, "> Napisz na Public");
     else { MapperGfx::fit(nm, sizeof(nm), _threads[i - 1], 100); int u = unreadCount(_threads[i - 1]); if (u) snprintf(c, sizeof(c), "%d", u); }
     if (i == _sel) { _g.rect(0, y - 1, 128, ROW_H); _g.color(false); }
     _g.text(2, y, nm); if (c[0]) _g.textRight(125, y, c);
@@ -1066,7 +1066,7 @@ void UITask::drawRpts() {
     int i = _top + r; if (i >= n) break;
     int y = 24 + r * ROW_H;
     char nm[28], d[16]; d[0] = 0;
-    if (i == 0) strcpy(nm, "» Co tu słychać?");
+    if (i == 0) strcpy(nm, "> Co tu słychać?");
     else {
       Rpt& rp = _rpts[i - 1];
       if (rp.dist_m >= 0) fmtDist(d, sizeof(d), rp.dist_m); else fmtAgo(d, sizeof(d), rp.last);
@@ -1101,7 +1101,7 @@ void UITask::drawRptDetail() {
   char a[16]; fmtAgo(a, sizeof(a), r.last);
   snprintf(b, sizeof(b), "advert: %s", a);
   _g.text(0, 54, b);
-  _g.textRight(127, 54, "OK »");
+  _g.textRight(127, 54, "OK >");
 }
 
 // kompas: strzalka do repeatera wzgledem kierunku jazdy (albo polnocy, gdy stoimy)
