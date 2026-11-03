@@ -73,6 +73,11 @@ class CompanionMapper {
   uint8_t _last_prefix[2];
   int8_t _last_snr;
   bool _sound;
+  float _spd_kmh = 0; unsigned long _spd_at = 0, _spd_t = 0; int32_t _spd_lat = 0, _spd_lon = 0;
+  void speedSample(int32_t lat, int32_t lon);
+public:
+  int  effInterval() const;                         // przy 20 s: od 60 km/h co 15 s, powyzej 100 km/h co 10 s
+private:
   int8_t _hist[10]; int _hist_n = 0;
   FILESYSTEM* _logfs = NULL;
   bool _fs_low = false;

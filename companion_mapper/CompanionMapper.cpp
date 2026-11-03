@@ -85,6 +85,17 @@ bool CompanionMapper::gpsFix() {
   return l != NULL && l->isValid() && l->satellitesCount() >= CMAP_MIN_SATS;
 }
 
+void CompanionMapper::speedSample(int32_t lat, int32_t lon) {
+  unsigned long now = millis();
+  if (_spd_t && now - _spd_t < 6000UL) return;
+  if (_spd_t && now - _spd_t < 30000UL) { _spd_kmh = (float)(distM(_spd_lat, _spd_lon, lat, lon) / ((now - _spd_t) / 1000.0) * 3.6); _spd_at = now; }
+  _spd_lat = lat; _spd_lon = lon; _spd_t = now;
+}
+int CompanionMapper::effInterval() const {
+  if (_interval != 20 || !_spd_at || millis() - _spd_at > 15000UL) return _interval;
+  return _spd_kmh > 100.0f ? 10 : _spd_kmh >= 60.0f ? 15 : 20;
+}
+
 void CompanionMapper::movementLoop() {
   if (!gpsFix()) { _fix_since = 0; _mv_count = 0; _mv_streak = 0; return; }
   unsigned long now = millis();
@@ -93,6 +104,7 @@ void CompanionMapper::movementLoop() {
   _mv_next = now + 2000;
   LocationProvider* l = sensors.getLocationProvider();
   _mv_lat[_mv_head] = l->getLatitude(); _mv_lon[_mv_head] = l->getLongitude();
+  speedSample(_mv_lat[_mv_head], _mv_lon[_mv_head]);
   _mv_head = (_mv_head + 1) % 10;
   if (_mv_count < 10) _mv_count++;
   _mv_streak = rawMoving() ? _mv_streak + 1 : 0;
@@ -150,11 +162,11 @@ void CompanionMapper::startPing() {
   _resp_n = 0;
   if (_host->mpSendDiscover(d, sizeof(d))) {
     _collecting = true;
-    _collect_until = millis() + CMAP_COLLECT_MS;
+    _collect_until = millis() + (effInterval() < 20 ? (unsigned long) effInterval() * 1000UL - 2000UL : CMAP_COLLECT_MS);
     _pings++;
   } else _tag = 0;
   _last_ping = millis();
-  _next_ping = _last_ping + (unsigned long) _interval * 1000UL;
+  _next_ping = _last_ping + (unsigned long) effInterval() * 1000UL;
 }
 
 // wolne miejsce na flashu z logiem (LittleFS): ponizej 384 kB przestajemy zapisywac punkty
@@ -403,7 +415,7 @@ void CompanionMapper::getView(MapperView& v) {
   v.stationary = _still >= CMAP_STATIONARY;
   v.phone_mapping = _phone_ping_at && millis() - _phone_ping_at < CMAP_PHONE_HOLD_MS;
   v.log_full = _log.isFull() || _fs_low; v.collecting = _collecting;
-  v.interval_s = _interval;
+  v.interval_s = effInterval();
   long s = ((long)(_next_ping - millis()) + 999) / 1000; v.next_ping_s = s < 0 ? 0 : (int) s;
   v.pings = _pings; v.hits = _hits; v.pending = _log.pending();
   v.last_n = _last_n; v.last_prefix[0] = _last_prefix[0]; v.last_prefix[1] = _last_prefix[1]; v.last_snr_x4 = _last_snr;

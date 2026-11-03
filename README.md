@@ -262,3 +262,9 @@ Plik `Companion-SF6Mapper-T-Echo-bez-ekranu-<wersja>.uf2` to ten sam companion z
 - **Mapperem sterujesz z aplikacji Mapper SF6:** karta „SF6 Mapper w companionie” (Włącz/Zatrzymaj razem z GPS,
   ping co 20–60 s, zrzut danych, podgląd LIVE). Ustawienia zostają po wyłączeniu, więc wystarczy raz włączyć mapper.
 - Wiadomości, kontakty i kanały działają normalnie przez aplikację MeshCore.
+
+## Odstęp pingów zależny od prędkości (od 1.6.0, tracker i companion)
+
+Przy ustawieniu **„ping co 20 s”** odstęp skraca się sam w szybszej jeździe: **od 60 km/h co 15 s, powyżej 100 km/h co 10 s**
+(prędkość liczona z przesunięcia GPS w ok. 6 s). Okno zbierania odpowiedzi skraca się wtedy do 13 s / 8 s. Przy 30–60 s odstęp
+jest stały. Ekran pokazuje aktualny odstęp. Tak samo działa aplikacja Mapper (Android 1.0.21 / iOS 1.0.17).

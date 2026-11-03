@@ -375,6 +375,20 @@ static bool limitSuspect(unsigned long now) {
   return false;
 }
 
+// ---------------- predkosc (do skracania odstepu pingow) ----------------
+// Przy „ping co 20 s”: od 60 km/h co 15 s, powyzej 100 km/h co 10 s. Predkosc z przesuniecia w ~6 s.
+static float spd_kmh = 0; static unsigned long spd_at = 0, spd_t = 0; static int32_t spd_lat = 0, spd_lon = 0;
+static void speedSample(int32_t lat, int32_t lon) {
+  unsigned long now = millis();
+  if (spd_t && now - spd_t < 6000UL) return;
+  if (spd_t && now - spd_t < 30000UL) { spd_kmh = (float)(distMeters(spd_lat, spd_lon, lat, lon) / ((now - spd_t) / 1000.0) * 3.6); spd_at = now; }
+  spd_lat = lat; spd_lon = lon; spd_t = now;
+}
+static int effInterval() {
+  if (interval_s != 20 || !spd_at || millis() - spd_at > 15000UL) return interval_s;
+  return spd_kmh > 100.0f ? 10 : spd_kmh >= 60.0f ? 15 : 20;
+}
+
 // ---------------- wykrywanie ruchu ----------------
 static bool rawMoving();
 static void movementLoop() {
@@ -387,6 +401,7 @@ static void movementLoop() {
   LocationProvider* l = gps();
   mv_lat[mv_head] = l->getLatitude();
   mv_lon[mv_head] = l->getLongitude();
+  speedSample(mv_lat[mv_head], mv_lon[mv_head]);
   mv_head = (mv_head + 1) % MOVE_WINDOW;
   if (mv_count < MOVE_WINDOW) mv_count++;
   mv_streak = rawMoving() ? mv_streak + 1 : 0;
@@ -448,11 +463,11 @@ static void startPing() {
   ping_hdr.flags = ((interval_s / 10) & MAP_REC_INTERVAL_MASK) | ((session_no & 0x0F) << MAP_REC_SESSION_SHIFT);
 
   if (the_mesh.sendDiscover()) {
-    collect_until = millis() + COLLECT_MS;
+    collect_until = millis() + (effInterval() < 20 ? (unsigned long) effInterval() * 1000UL - 2000UL : COLLECT_MS);   // przy 10/15 s krocej
     status.sess_pings++;
   }
   last_ping_at = millis();
-  next_ping_at = last_ping_at + (unsigned long) interval_s * 1000UL;
+  next_ping_at = last_ping_at + (unsigned long) effInterval() * 1000UL;
 }
 
 static void finishPing() {
@@ -850,7 +865,7 @@ static void updateStatus() {
   status.stationary = still_count >= STATIONARY_PINGS;
   status.log_full = maplog.isFull();
   status.mem_pct = memPct();
-  status.interval_s = interval_s;
+  status.interval_s = effInterval();                 // na ekranie: aktualny odstep (przy 20 s w szybkiej jezdzie 15/10 s)
   long secs = ((long)(next_ping_at - millis()) + 999) / 1000;
   status.next_ping_secs = secs < 0 ? 0 : (int) secs;
   status.pending = maplog.pending();
