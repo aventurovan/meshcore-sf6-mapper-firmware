@@ -230,6 +230,17 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #endif
 }
 
+void UITask::onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) {
+  if (!(txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN)) return;   // tylko tekst, bez danych CLI
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, from.name, text, 0);
+}
+
+void UITask::onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) {
+  newMsg(pkt->isRouteFlood() ? pkt->path_len : 0xFF, channel_details.name[0] ? channel_details.name : "kanal ?", text, 0);
+}
+
+void UITask::onQueueSizeChanged(int msgcount) { msgRead(msgcount); }
+
 void UITask::msgRead(int msgcount) {
   if (msgcount == 0) { for (int i = 0; i < _msg_n; i++) _msgs[i].unread = false; _dirty = true; }
 }

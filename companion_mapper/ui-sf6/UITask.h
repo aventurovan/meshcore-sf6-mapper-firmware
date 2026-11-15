@@ -26,8 +26,12 @@ class UITask : public AbstractUITask {
 public:
   UITask(mesh::MainBoard* board, MultiSerialInterface* im) : AbstractUITask(board, im) { }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
-  void msgRead(int msgcount) override;
-  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
+  void msgRead(int msgcount);
+  void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount);
+  // MyMesh::Listener (MeshCore 1.18: UI dostaje zdarzenia jako nasluchujacy)
+  void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) override;
+  void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) override;
+  void onQueueSizeChanged(int msgcount) override;
   void notify(UIEventType t = UIEventType::none) override;
   void loop() override;
   void mapperBeep();

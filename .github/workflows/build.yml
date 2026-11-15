@@ -9,7 +9,7 @@ on:
 
 env:
   # wersja MeshCore, na ktorej budujemy (zmien, zeby przejsc na nowsza)
-  MESHCORE_REF: a366955cb2f67b8e6842d4f00d2b6a554dddd88a
+  MESHCORE_REF: 7d6d255104eadbfccd85ceae4ccbc14133946f7e   # companion-v1.18.0
 
 permissions:
   contents: write   # publikacja plików .uf2 w wydaniu „Najnowszy build”
