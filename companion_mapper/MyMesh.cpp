@@ -2536,7 +2536,7 @@ bool MyMesh::uiAdminCli(const char* cmd) {
   if (!c) return false;
   uint32_t est = 0;
   ui_admin.cli_ready = false; ui_admin.cli_wait = true;
-  if (sendCommandData(*c, getRTCClock()->getCurrentTimeUnique(), 0, cmd, est) == MSG_SEND_FAILED) { ui_admin.cli_wait = false; return false; }
+  if (sendCommandData(*c, getRTCClock()->getCurrentTimeUnique(), 0, TXT_TYPE_CLI_DATA, cmd, est) == MSG_SEND_FAILED) { ui_admin.cli_wait = false; return false; }
   ui_admin.est_timeout = est;
   return true;
 }
