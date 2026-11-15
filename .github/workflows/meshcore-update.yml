@@ -1,0 +1,69 @@
+name: Nowe wydanie MeshCore → Companion + Mapper
+
+# Codziennie sprawdza, czy wyszedł nowy oficjalny companion MeshCore (tag companion-vX.Y.Z).
+# Jeśli tak: nakłada zmiany na companion_mapper, podbija wersję, buduje na gałęzi próbnej, a gdy build przejdzie —
+# przenosi na main i uruchamia build main (Najnowszy build + wydanie vX.Y.Z). Flasher na stronie pobiera je o 4:41.
+# Konflikt w scalaniu albo nieudany build → zgłoszenie (Issue) w repo i nic nie trafia do wydania.
+on:
+  schedule:
+    - cron: "17 1 * * *"     # 2:17 / 3:17 czasu polskiego — przed synchronizacją flashera (3:41 UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: meshcore-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sprawdź i scal nowe wydanie MeshCore
+        id: up
+        run: python3 tools/meshcore_update.py
+
+      - name: Konflikt — zgłoszenie do ręcznego scalenia
+        if: steps.up.outputs.status == 'conflict'
+        run: |
+          T="MeshCore ${{ steps.up.outputs.tag }}: konflikt przy scalaniu Companion + Mapper"
+          gh issue list --state open --search "$T in:title" --json number -q '.[].number' | grep -q . && exit 0
+          gh issue create --title "$T" --body "Automatyczne przejście na ${{ steps.up.outputs.tag }} zatrzymane — pliki wymagają ręcznego scalenia: ${{ steps.up.outputs.conflicts }}. Wydanie nie zostało zrobione."
+
+      - name: Build próbny na gałęzi auto/
+        if: steps.up.outputs.status == 'ok'
+        id: try
+        run: |
+          BR="auto/meshcore-${{ steps.up.outputs.tag }}"
+          git config user.name "sf6-bot"; git config user.email "sf6-bot@users.noreply.github.com"
+          git checkout -b "$BR"
+          git commit -qam "${{ steps.up.outputs.version }}: przejście na MeshCore ${{ steps.up.outputs.tag }} (automatycznie)"
+          git push -f -q origin "$BR"
+          gh workflow run build.yml --ref "$BR"
+          sleep 20
+          RUN=$(gh run list --workflow build.yml --branch "$BR" -L 1 --json databaseId -q '.[0].databaseId')
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"; echo "br=$BR" >> "$GITHUB_OUTPUT"
+          gh run watch "$RUN" --exit-status --interval 30
+
+      - name: Wydanie — main + build main
+        if: steps.up.outputs.status == 'ok' && success()
+        run: |
+          git push -q origin "${{ steps.try.outputs.br }}:main"
+          git push -q origin --delete "${{ steps.try.outputs.br }}" || true
+          gh workflow run build.yml --ref main
+
+      - name: Build nie przeszedł — zgłoszenie
+        if: steps.up.outputs.status == 'ok' && failure()
+        run: |
+          T="MeshCore ${{ steps.up.outputs.tag }}: build Companion + Mapper nie przeszedł"
+          gh issue list --state open --search "$T in:title" --json number -q '.[].number' | grep -q . && exit 0
+          gh issue create --title "$T" --body "Zmiany scaliły się bez konfliktów, ale build się nie udał (prawdopodobnie zmiana API w MeshCore): ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.try.outputs.run }} — gałąź ${{ steps.try.outputs.br }}. Wydanie nie zostało zrobione."
