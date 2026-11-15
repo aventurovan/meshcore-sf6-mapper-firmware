@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]         # wypchnięty tag v1.2.3 → build i wydanie z numerem wersji (tworzy je sam workflow)
   release:
     types: [ published ]   # nowe wydanie z numerem wersji: build i dołączenie plików .uf2
 
@@ -102,3 +103,16 @@ jobs:
         run: |
           cd mapper
           gh release upload "${{ github.event.release.tag_name }}" ../out/* --clobber
+
+      - name: Wydanie z numerem wersji (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd mapper
+          TAG="${GITHUB_REF_NAME}"
+          VER=$(grep -oP 'MAPPER_FW_VERSION\s+"\K[^"]+' sf6_mapper/MapperProtocol.h)
+          MC=$(grep -oP 'MESHCORE_REF:.*#\s*\K\S+' .github/workflows/build.yml || true)
+          NOTES="SF6 Mapper $VER — companion z mapperem (polski interfejs MC SF6) i samodzielny tracker${MC:+, zbudowane na MeshCore $MC}. Pliki .uf2 przeciągnij na dysk urządzenia po podwójnym resecie; -ota.zip do aktualizacji przez Bluetooth."
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "SF6 Mapper $VER — tracker + companion (Wio Tracker L1, LilyGO T-Echo)" --notes "$NOTES" --verify-tag
+          gh release upload "$TAG" ../out/* --clobber
