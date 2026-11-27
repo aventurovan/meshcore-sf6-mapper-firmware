@@ -187,7 +187,8 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   | 3× szybko (na Starcie i ekranie Mappera) | mapper STOP + GPS wył. |
 - **Aktualizacja przez Bluetooth (OTA):** wymaga bootloadera OTAFIX (wgrywany raz kablem — flasher na meshcoresouth.pl).
   Na Wio: Ustawienia → „Aktualizacja BT” (dwa razy OK), na T-Echo: menu mappera → „Aktualizacja BT” (dwa razy OK),
-  albo z aplikacji komendą `0xB0`. Urządzenie zapisuje kontakty i restartuje się w tryb aktualizacji Bluetooth
+  albo z aplikacji komendą `0xB0` lub komendą CLI `start ota` (CLI companiona z aplikacji, albo zdalnie od kontaktu
+  z uprawnieniem do CLI); `get bootloader.ver` pokazuje bootloader. Urządzenie zapisuje kontakty i restartuje się w tryb aktualizacji Bluetooth
   (rozgłasza się jako `AdaDFU`); firmware wysyła się z aplikacji (MeshSpeed, nRF Connect). Bez limitu czasu —
   rezygnacja: restart albo odłączenie zasilania. Bez OTAFIX pozycja pokazuje „brak” i nie działa.
   Protokół: `0xB0 0x00` = informacja, `0xB0 0x01` = start; odpowiedź `[0xB0][status][wersja bootloadera]`,

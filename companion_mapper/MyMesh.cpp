@@ -2176,6 +2176,15 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
     return true;
   }
 
+  // SF6: aktualizacja przez Bluetooth z CLI (aplikacja albo zdalnie od kontaktu z uprawnieniem do CLI)
+  if (strcmp(command, "start ota") == 0 || strcmp(command, "get bootloader.ver") == 0) {
+    char bl[40];
+    uint8_t st = sf6OtaStatus(bl, sizeof(bl));
+    if (command[0] == 'g') { sprintf(reply, "> %s", bl[0] ? bl : "unknown"); return true; }
+    if (st == 0 && sf6OtaStart()) strcpy(reply, "OK - restart do aktualizacji przez Bluetooth (AdaDFU)");
+    else sprintf(reply, "Err - wymaga bootloadera OTAFIX (%s)", st == 1 ? "brak bootloadera nRF52" : bl);
+    return true;
+  }
   if (strcmp(command, "reboot") == 0) {
     board.reboot(); // doesn't return
     return true;
