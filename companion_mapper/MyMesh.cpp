@@ -1092,7 +1092,43 @@ void MyMesh::startInterface(BaseSerialInterface &serial) {
   serial.enable();
 }
 
+/* ---------- SF6: aktualizacja companiona przez Bluetooth (OTA) ----------
+ * Komenda 0xB0 [sub]: sub 0 = informacja, sub 1 = start. Odpowiedź: [0xB0][status][wersja bootloadera ASCII].
+ * status 0 = można (bootloader OTAFIX), 1 = brak bootloadera nRF52, 2 = bootloader bez OTAFIX (wtedy start odmowa).
+ * Start: kontakty zapisane, po ~0,6 s restart do bootloadera w trybie aktualizacji Bluetooth (rozgłasza się jako
+ * „AdaDFU”, legacy DFU, bez limitu czasu — wraca do firmware po wgraniu albo po restarcie/odłączeniu zasilania). */
+#define SF6_CMD_OTA 0xB0
+static unsigned long sf6_ota_at = 0;
+
+uint8_t MyMesh::sf6OtaStatus(char* bl, size_t max_len) {
+  bl[0] = 0;
+  if (!board.getBootloaderVersion(bl, max_len)) { bl[0] = 0; return 1; }
+  return strstr(bl, "OTAFIX") ? 0 : 2;
+}
+
+bool MyMesh::sf6OtaStart() {
+#ifdef NRF52_PLATFORM
+  char bl[40];
+  if (sf6OtaStatus(bl, sizeof(bl)) != 0) return false;
+  if (dirty_contacts_expiry) saveContacts();
+  sf6_ota_at = millis() + 600;   // ramka odpowiedzi zdąży wyjść przez BLE
+  return true;
+#else
+  return false;
+#endif
+}
+
 void MyMesh::handleCmdFrame(size_t len) {
+  if (cmd_frame[0] == SF6_CMD_OTA && len >= 2) {
+    char bl[40];
+    uint8_t st = sf6OtaStatus(bl, sizeof(bl));
+    uint8_t r[2 + sizeof(bl)];
+    size_t n = strlen(bl);
+    r[0] = SF6_CMD_OTA; r[1] = st; memcpy(&r[2], bl, n);
+    _serial->writeFrame(r, 2 + n);
+    if (cmd_frame[1] == 0x01 && st == 0) sf6OtaStart();
+    return;
+  }
   // SF6 Mapper: komendy 0xA0..0xA7 (zrzut danych, start/stop, interwal) — ten sam protokol co tracker
   if (cmd_frame[0] >= 0xA0 && cmd_frame[0] <= 0xA7 && mapper.handleCmd(cmd_frame, len)) return;
   if (cmd_frame[0] == CMD_SEND_CONTROL_DATA && len >= 2 && (cmd_frame[1] & 0xF0) == 0x80) mapper.notePhoneDiscover();
@@ -2579,6 +2615,9 @@ void MyMesh::mpSetGps(bool on) {
 void MyMesh::loop() {
   BaseChatMesh::loop();
   mapper.loop();
+#ifdef NRF52_PLATFORM
+  if (sf6_ota_at && (long)(millis() - sf6_ota_at) >= 0) { sf6_ota_at = 0; enterOTADfu(); }
+#endif
 
   if (_cli_rescue) {
     checkCLIRescueCmd();

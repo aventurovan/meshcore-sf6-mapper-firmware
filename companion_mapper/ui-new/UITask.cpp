@@ -152,6 +152,7 @@ class HomeScreen : public UIScreen {
   bool _shutdown_init;
   bool _mm = false;     // menu mappera otwarte
   uint8_t _msel = 0;    // zaznaczona pozycja menu mappera
+  unsigned long ota_armed = 0;   // „Aktualizacja BT”: drugie OK w ciągu UI_STOP_CONFIRM_MS potwierdza
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 #if UI_DISCOVER_SCREEN
   DiscoveredNode discovered[DISCOVERED_NODES_TABLE_SIZE]; // not circular, latest discovered nodes are not kept
@@ -547,15 +548,16 @@ public:
 #endif
     } else if (_page == HomePage::MAPPER && _mm) {
       // menu mappera
-      static const char* const L[4] = {"Mapowanie", "Ping co", "Dzwiek", "Wyjscie"};
+      static const char* const L[5] = {"Mapowanie", "Ping co", "Dzwiek", "Aktualizacja BT", "Wyjscie"};
       char v[16];
       display.setTextSize(1);
-      for (int i = 0; i < 4; i++) {
+      for (int i = 0; i < 5; i++) {
         int y = 20 + i * 11;
         v[0] = 0;
         if (i == 0) strcpy(v, (map_stop_armed && millis() - map_stop_armed < UI_STOP_CONFIRM_MS) ? "STOP? OK" : mapper.isRunning() ? "WL" : "STOP");
         if (i == 1) snprintf(v, sizeof(v), "%d s", mapper.getInterval());
         if (i == 2) strcpy(v, mapper.soundOn() ? "WL" : "WYL");
+        if (i == 3) { char bl[40]; strcpy(v, (ota_armed && millis() - ota_armed < UI_STOP_CONFIRM_MS) ? "OK?" : the_mesh.sf6OtaStatus(bl, sizeof(bl)) == 0 ? "OTAFIX" : "brak"); }
         if (i == _msel) { display.setColor(UIColor::primary_txt); display.fillRect(0, y - 1, display.width(), 10); display.setColor(UIColor::window_bkg); }
         else display.setColor(UIColor::primary_txt);
         display.setCursor(2, y);
@@ -666,8 +668,8 @@ public:
 
   bool handleInput(char c) override {
     if (_mm) {                                  // menu mappera: gora/dol (T-Echo: klik/dwuklik), OK zmienia, lewo wychodzi
-      if (c == KEY_UP || c == KEY_PREV)   { _msel = (_msel + 3) % 4; map_stop_armed = 0; return true; }
-      if (c == KEY_DOWN || c == KEY_NEXT) { _msel = (_msel + 1) % 4; map_stop_armed = 0; return true; }
+      if (c == KEY_UP || c == KEY_PREV)   { _msel = (_msel + 4) % 5; map_stop_armed = 0; ota_armed = 0; return true; }
+      if (c == KEY_DOWN || c == KEY_NEXT) { _msel = (_msel + 1) % 5; map_stop_armed = 0; ota_armed = 0; return true; }
       if (c == KEY_LEFT || c == KEY_CANCEL) { _mm = false; return true; }
       if (c == KEY_ENTER || c == KEY_RIGHT) {
         if (_msel == 0) {
@@ -679,6 +681,11 @@ public:
           mapper.setInterval(s);
         } else if (_msel == 2) {
           mapper.setSound(!mapper.soundOn());
+        } else if (_msel == 3) {                  // aktualizacja firmware przez Bluetooth (wymaga bootloadera OTAFIX)
+          char bl[40];
+          if (the_mesh.sf6OtaStatus(bl, sizeof(bl)) != 0) { _task->showAlert("Wymaga OTAFIX", 2500); ota_armed = 0; }
+          else if (!(ota_armed && millis() - ota_armed < UI_STOP_CONFIRM_MS)) ota_armed = millis();
+          else { ota_armed = 0; _task->showAlert("Aktualizacja BT", 3000); the_mesh.sf6OtaStart(); }
         } else { _mm = false; }
         return true;
       }

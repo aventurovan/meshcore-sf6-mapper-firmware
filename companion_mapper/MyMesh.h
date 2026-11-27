@@ -142,6 +142,9 @@ public:
   int  uiMaxTxPower() const { return MAX_LORA_TX_POWER; }
   bool uiAdvertFlood();
   bool uiSendChannelText(int channel_idx, const char* text);
+  // SF6: aktualizacja firmware przez Bluetooth (bootloader OTAFIX) — komenda 0xB0 i menu na ekranie
+  uint8_t sf6OtaStatus(char* bl, size_t max_len);   // 0 = można (OTAFIX), 1 = brak bootloadera nRF52, 2 = bez OTAFIX
+  bool sf6OtaStart();                               // po ~0,6 s restart do trybu aktualizacji przez Bluetooth (AdaDFU)
   bool uiSendDirectText(const char* contact_name, const char* text);     // wiadomosc prywatna (kontakt po nazwie)
   int  uiToggleFavourite(const uint8_t* pub_key);                         // 1 = ulubiony, 0 = nie, -1 = brak kontaktu
   int  uiChannelIndex(const char* name);

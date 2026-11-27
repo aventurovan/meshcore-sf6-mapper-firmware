@@ -674,7 +674,7 @@ static const char* const QUICK[8] = { "OK", "Jadę", "Jestem na miejscu", "Odbi�
 static const char* const TO_LABEL[4] = { "15 s", "30 s", "60 s", "nigdy" };
 
 int UITask::menuCount(int id) {
-  static const uint8_t C[15] = { 11, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
+  static const uint8_t C[15] = { 12, 4, 3, 7, 3, 2, 3, 2, 3, 8, 3, 5, 2, 7, 7 };
   if (id == 15) { uint8_t a[4]; return ctMenu(a); }
   return id >= 0 && id < 15 ? C[id] : 0;
 }
@@ -684,7 +684,7 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
   bool armed = _armed_item == id * 16 + i && millis() - _stop_armed < CONFIRM_MS;
   switch (id) {
     case 0: {
-      static const char* const N[11] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Hasła repeaterów", "Restart", "Wyłącz" };
+      static const char* const N[12] = { "Mapper", "Bluetooth", "Radio", "GPS", "Advert", "Ekran", "Dźwięk", "Informacje", "Hasła repeaterów", "Aktualizacja BT", "Restart", "Wyłącz" };
       strcpy(L, N[i]);
       if (i == 0) strcpy(V, mapper.isRunning() ? "WŁ" : "STOP");
       if (i == 1) strcpy(V, isBluetoothEnabled() ? (hasConnection() ? "połącz." : "WŁ") : "WYŁ");
@@ -692,7 +692,8 @@ void UITask::menuItem(int id, int i, char* L, char* V) {
       if (i == 3) strcpy(V, _prefs->gps_enabled ? "WŁ" : "WYŁ");
       if (i == 5) strcpy(V, TO_LABEL[_timeout_idx & 3]);
       if (i == 8) { if (armed) strcpy(V, "usuń?"); else snprintf(V, 8, "%d", pwCount()); }
-      if ((i == 9 || i == 10) && armed) strcpy(V, "OK?");
+      if (i == 9) { char bl[40]; strcpy(V, armed ? "OK?" : the_mesh.sf6OtaStatus(bl, sizeof(bl)) == 0 ? "OTAFIX" : "brak"); }
+      if ((i == 10 || i == 11) && armed) strcpy(V, "OK?");
       break;
     }
     case 1: {
@@ -854,8 +855,18 @@ void UITask::menuAction(int dir) {
         return;
       }
       if (i == 8) { if (!pwCount()) { popup("Brak zapamiętanych haseł"); return; } if (!armed) { arm(); return; } pwClear(); _armed_item = -1; popup("Hasła usunięte"); return; }
-      if (i == 9) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
-      if (i == 10) {
+      if (i == 9) {                               // aktualizacja firmware przez Bluetooth (wymaga bootloadera OTAFIX)
+        char bl[40];
+        uint8_t st = the_mesh.sf6OtaStatus(bl, sizeof(bl));
+        if (st != 0) { popup("Wymaga OTAFIX", st == 1 ? "brak bootloadera nRF52" : "wgraj OTAFIX kablem", bl[0] ? bl : NULL, 4000); return; }
+        if (!armed) { arm(); return; }
+        _armed_item = -1;
+        popup("Aktualizacja BT", "wyślij firmware z aplikacji", "restart = anuluj", 3000); render();
+        the_mesh.sf6OtaStart();
+        return;
+      }
+      if (i == 10) { if (!armed) { arm(); return; } popup("Restart..."); render(); delay(400); NVIC_SystemReset(); }
+      if (i == 11) {
         if (!armed) { arm(); return; }
         popup("Wyłączanie..."); render(); delay(600);
         if (_display) _display->turnOff();
