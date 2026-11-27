@@ -22,8 +22,6 @@
 #define OK_CLICK_MS      600UL     // dluzsze nacisniecie to nie klikniecie
 #define OK_MULTI_MS      400UL     // okno na 2./3. klikniecie (skroty)
 #define OK_UNLOCK_MS     2000UL
-#define OK_SOS_SHOW_MS   5000UL
-#define OK_SOS_MS        8000UL
 #define CONFIRM_MS       4000UL
 #define ROWS             4
 #define ROW_H            10
@@ -457,35 +455,13 @@ void UITask::mapperSet(bool on) {
 #endif
 }
 
-void UITask::sendSOS() {
-  char msg[150], pos[48];
-  LocationProvider* l = _sensors ? _sensors->getLocationProvider() : NULL;
-  double la = 0, lo = 0; bool have = false, old = false;
-  if (l && l->isValid()) { la = l->getLatitude() / 1e6; lo = l->getLongitude() / 1e6; have = true; }
-  else if (sensors.node_lat != 0 || sensors.node_lon != 0) { la = sensors.node_lat; lo = sensors.node_lon; have = true; old = true; }
-  if (have) {
-    snprintf(pos, sizeof(pos), "%.5f,%.5f", la, lo);
-    snprintf(msg, sizeof(msg), "SOS! Potrzebuję pomocy. Pozycja%s: %s https://maps.google.com/?q=%s", old ? " (ostatnia znana)" : "", pos, pos);
-  } else {
-    snprintf(msg, sizeof(msg), "SOS! Potrzebuję pomocy. Brak pozycji GPS.");
-    strcpy(pos, "brak pozycji GPS");
-  }
-  bool ok = the_mesh.uiSendChannelText(0, msg);
-  if (ok) addMsg("Public", msg, true, true);
-  popup(ok ? "SOS WYSŁANY" : "SOS: błąd wysyłki", ok ? "kanał Public" : "brak kanału Public", pos, 8000);
-#ifdef PIN_BUZZER
-  if (buzzer.isQuiet()) { buzzer.quiet(false); beep_restore = true; }
-  buzzer.play("sos:d=8,o=6,b=180:a,a,a");
-#endif
-}
-
 void UITask::okClicks(int n) {
   if (n >= 3) { mapperSet(false); return; }
   if (n == 2) { mapperSet(true); return; }
   key('O');
 }
 
-// przycisk OK: klikniecia (1/2/3), przytrzymanie 2 s (odblokowanie) i 8 s (SOS)
+// przycisk OK: klikniecia (1/2/3) i przytrzymanie 2 s (odblokowanie)
 void UITask::okLoop() {
   unsigned long now = millis();
   // debounce: zmiana stanu liczy sie dopiero po 30 ms stabilnego odczytu (drgania styku dawaly dodatkowe klikniecia)
@@ -493,9 +469,8 @@ void UITask::okLoop() {
   if (raw != _ok_raw) { _ok_raw = raw; _ok_raw_t = now; }
   bool down = (now - _ok_raw_t >= 30) ? _ok_raw : _ok_down;
   if (down && !_ok_down) {
-    _ok_down = true; _ok_t0 = now; _unlock_done = false; _sos_sent = false;
+    _ok_down = true; _ok_t0 = now; _unlock_done = false;
     _ok_woke = !_on;
-    _ok_from_lock = _locked;                      // przytrzymanie zaczete na blokadzie: tylko odblokowuje, bez SOS
     wake();
   }
   if (down && _ok_down) {
@@ -506,20 +481,11 @@ void UITask::okLoop() {
       _dirty = true;
       if (held >= OK_UNLOCK_MS) { _locked = false; _unlock_done = true; popup("Odblokowano", NULL, NULL, 1200); }
     }
-    if (held >= OK_SOS_SHOW_MS && !_sos_sent && !_ok_from_lock) {
-      char l1[32]; unsigned long left = (OK_SOS_MS - (held < OK_SOS_MS ? held : OK_SOS_MS) + 999) / 1000;
-      snprintf(l1, sizeof(l1), "SOS za %lu s", left);
-      strcpy(_pop1, l1); strcpy(_pop2, "puść OK = anuluj"); _pop3[0] = 0;
-      _pop_pct = (int)((held - OK_SOS_SHOW_MS) * 100 / (OK_SOS_MS - OK_SOS_SHOW_MS)); if (_pop_pct > 100) _pop_pct = 100;
-      _pop_until = now + 400; _pop_msg = false; _dirty = true;
-      if (held >= OK_SOS_MS) { _sos_sent = true; _locked = false; sendSOS(); }
-    }
   }
   if (!down && _ok_down) {
     _ok_down = false;
     unsigned long held = now - _ok_t0;
-    if (!_sos_sent && held >= OK_SOS_SHOW_MS && !_ok_from_lock) popup("SOS anulowane");
-    else if (held < OK_CLICK_MS && !_ok_woke && !_locked) { _clicks++; _click_t = now; }
+    if (held < OK_CLICK_MS && !_ok_woke && !_locked) { _clicks++; _click_t = now; }
     else if (held < OK_CLICK_MS && _locked) popup("Zablokowane", "trzymaj OK 2 s");
     _pop_pct = -1;
   }

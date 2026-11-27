@@ -185,10 +185,6 @@ interfejs ekranu „ui-new”) z wbudowanym SF6 Mapperem.
   | przytrzymanie 2 s | odblokowanie ekranu |
   | 2× szybko (na Starcie i ekranie Mappera) | mapper WŁ + GPS |
   | 3× szybko (na Starcie i ekranie Mappera) | mapper STOP + GPS wył. |
-  | przytrzymanie 8 s (na każdym ekranie, także zablokowanym) | **SOS** na kanał Public z aktualną pozycją i linkiem do mapy |
-
-  Od 5. sekundy trzymania widać odliczanie „SOS za … s”, a puszczenie OK anuluje wysyłkę. Bez fixu GPS wysyłana jest
-  ostatnia znana pozycja (z dopiskiem), a bez żadnej pozycji sama prośba o pomoc.
 - **Blokada ekranu (Wio):** po wygaszeniu ekranu. Na zasilaniu USB ekran nie gaśnie i się nie blokuje.
 - **Ekran na T-Echo:** dotychczasowy interfejs companiona z dwiema stronami mappera („SF6 Mapper” i „Ostatnie RPT”)
   oraz menu mappera (przytrzymanie przycisku).

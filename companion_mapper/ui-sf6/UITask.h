@@ -3,7 +3,7 @@
  * Interfejs ekranu „MC SF6” dla Wio Tracker L1: Companion MeshCore + SF6 Mapper.
  * Karuzela ekranow (joystick lewo/prawo): Start, Wiadomosci, Mapper, Repeatery, Ustawienia.
  * Wszystko po polsku (wlasna czcionka z polskimi literami), skroty OK:
- *   przytrzymanie 2 s = odblokowanie, 2x = mapper WL, 3x = mapper STOP, przytrzymanie 8 s = SOS na kanal Public.
+ *   przytrzymanie 2 s = odblokowanie, 2x = mapper WL, 3x = mapper STOP.
  */
 #include "../AbstractUITask.h"
 #include "../NodePrefs.h"
@@ -89,7 +89,7 @@ private:
   bool usbPowered();
 
   // przycisk OK (wlasna obsluga: klikniecia, przytrzymania)
-  bool _ok_down = false, _ok_woke = false, _unlock_done = false, _sos_sent = false, _ok_from_lock = false;
+  bool _ok_down = false, _ok_woke = false, _unlock_done = false;
   // przewijanie dlugiej nazwy na zaznaczonym wierszu (po chwili postoju)
   unsigned long _sel_at = 0; int _sel_key = -1; bool _marquee = false;
   void selRow(const char* name, char* out, int outsz, int max_w);
@@ -113,7 +113,6 @@ private:
   void menuKey(char k);
   void menuAction(int dir);
   void openMenu(int id);
-  void sendSOS();
   void mapperSet(bool on);
 
   // rysowanie
